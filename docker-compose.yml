@@ -1,0 +1,42 @@
+services:
+  sia-ai-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sia-ai-service
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=development
+      - QDRANT_HOST=sia-qdrant
+      - QDRANT_PORT=6333
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    env_file:
+      - .env
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+    depends_on:
+      - sia-qdrant
+    networks:
+      - sia-network
+
+  sia-qdrant:
+    image: qdrant/qdrant:v1.12.1
+    container_name: sia-ai-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - sia-qdrant-data:/qdrant/storage
+    networks:
+      - sia-network
+
+volumes:
+  sia-qdrant-data:
+    name: sia-ai-qdrant-volume
+
+networks:
+  sia-network:
+    name: sia-network
+    driver: bridge
