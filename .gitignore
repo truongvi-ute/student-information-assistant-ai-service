@@ -23,3 +23,9 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
