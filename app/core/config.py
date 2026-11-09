@@ -17,18 +17,19 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
 
-    # OpenAI / Embedding
-    OPENAI_API_KEY: str = Field(default="", description="OpenAI API key")
-    OPENAI_BASE_URL: str | None = Field(default=None, description="Custom OpenAI base URL")
-    CHAT_MODEL: str = "gpt-4o-mini"
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    # Gemini API
+    GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
+    EMBEDDING_MODEL: str = "models/gemini-embedding-001"
+    CHAT_MODEL: str = "gemini-2.5-flash"
 
     # Vector DB (Qdrant)
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "sia_documents"
-    QDRANT_VECTOR_SIZE: int = 1536
+    
+    # text-embedding-004 của Gemini có 768 chiều (khác với OpenAI 1536)
+    QDRANT_VECTOR_SIZE: int = 768
 
     # Chunker Settings
     CHUNK_SIZE: int = 800
