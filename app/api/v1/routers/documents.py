@@ -1,58 +1,50 @@
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams
+import shutil
+import tempfile
+from pathlib import Path
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from app.core.config import settings
-from app.core.exceptions import VectorDBError
-from app.core.logging import logger
+from app.db.qdrant import get_qdrant_client
+from app.schemas.document import DocumentStatsResponse, IngestionResult
+from app.services.ingestion.pipeline import pipeline
 
-_client: QdrantClient | None = None
-
-
-def get_qdrant_client() -> QdrantClient:
-    """Khởi tạo và tái sử dụng QdrantClient singleton."""
-    global _client
-    if _client is None:
-        try:
-            _client = QdrantClient(
-                host=settings.QDRANT_HOST,
-                port=settings.QDRANT_PORT,
-                api_key=settings.QDRANT_API_KEY,
-                timeout=10.0,
-            )
-            logger.info("Kết nối Qdrant thành công tại %s:%s", settings.QDRANT_HOST, settings.QDRANT_PORT)
-        except Exception as e:
-            logger.error("Không thể kết nối tới Qdrant: %s", str(e))
-            raise VectorDBError(f"Lỗi kết nối Qdrant: {e}") from e
-    return _client
+router = APIRouter()
 
 
-def init_collection(client: QdrantClient | None = None, recreate: bool = False) -> None:
-    """Tạo collection nếu chưa có, hoặc tạo lại nếu recreate=True."""
-    client = client or get_qdrant_client()
-    collection_name = settings.QDRANT_COLLECTION
+@router.post("/upload", response_model=IngestionResult)
+async def upload_and_ingest(file: UploadFile = File(...)):
+    """Upload một file tài liệu (.txt, .md, .pdf) và nạp ngay vào Vector DB."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".txt", ".md", ".pdf"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Định dạng '{suffix}' không được hỗ trợ. Chỉ chấp nhận .txt, .md, .pdf",
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        shutil.copyfileobj(file.file, tmp_file)
 
     try:
-        exists = client.collection_exists(collection_name)
-        if exists and recreate:
-            logger.warning("Đang xoá collection cũ: %s", collection_name)
-            client.delete_collection(collection_name)
-            exists = False
-
-        if not exists:
-            logger.info(
-                "Đang tạo collection '%s' (vector_size=%d, distance=Cosine)...",
-                collection_name,
-                settings.QDRANT_VECTOR_SIZE,
-            )
-            client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=settings.QDRANT_VECTOR_SIZE,
-                    distance=Distance.COSINE,
-                ),
-            )
-            logger.info("Collection '%s' đã được tạo thành công.", collection_name)
-        else:
-            logger.info("Collection '%s' đã tồn tại sẵn sàng.", collection_name)
+        result = pipeline.ingest_path(tmp_path)
+        return result
     except Exception as e:
-        logger.error("Lỗi khởi tạo collection Qdrant: %s", str(e))
-        raise VectorDBError(f"Không thể khởi tạo collection: {e}") from e
+        raise HTTPException(status_code=500, detail=f"Lỗi khi nạp tài liệu: {str(e)}")
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+@router.get("/stats", response_model=DocumentStatsResponse)
+async def get_collection_stats():
+    """Xem số lượng vector và thông số collection hiện tại trên Qdrant."""
+    try:
+        client = get_qdrant_client()
+        info = client.get_collection(settings.QDRANT_COLLECTION)
+        return DocumentStatsResponse(
+            collection_name=settings.QDRANT_COLLECTION,
+            points_count=info.points_count or 0,
+            vector_size=settings.QDRANT_VECTOR_SIZE,
+            status=info.status.value if info.status else "unknown",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi truy vấn Qdrant: {str(e)}")
