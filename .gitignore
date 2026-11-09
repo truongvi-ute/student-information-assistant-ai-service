@@ -29,3 +29,6 @@ build/
 dist/
 *.egg-info/
 *.egg
+
+#Data test
+data/
