@@ -3,30 +3,47 @@ from pydantic import BaseModel, Field
 
 
 class Document(BaseModel):
-    """Đại diện cho một tài liệu thô được đọc từ nguồn."""
+    """Tài liệu thô được đọc từ nguồn (file .txt, .md hoặc từng trang .pdf)."""
+
     content: str = Field(..., description="Nội dung văn bản")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata kèm theo (source, page, filename...)")
+    # default_factory=dict giúp mỗi object có dict độc lập trong bộ nhớ
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata đi kèm (source, page, filename...)",
+    )
 
 
 class Chunk(BaseModel):
-    """Đại diện cho một đoạn văn bản sau khi cắt nhỏ."""
-    content: str = Field(..., description="Nội dung đoạn văn bản")
-    chunk_index: int = Field(..., description="Chỉ số thứ tự của chunk trong tài liệu")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata kế thừa và bổ sung")
+    """Đoạn văn bản nhỏ sau khi cắt từ Document, sẵn sàng cho embedding."""
+
+    content: str = Field(..., description="Nội dung đoạn văn bản đã chia nhỏ")
+    chunk_index: int = Field(
+        ...,
+        description="Số thứ tự của chunk trong tài liệu gốc (bắt đầu từ 0)",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata kế thừa từ tài liệu gốc và thông tin bổ sung của chunk",
+    )
 
 
 class IngestionResult(BaseModel):
-    """Kết quả tổng hợp của tiến trình nạp tài liệu."""
-    total_files: int = 0
-    total_chunks: int = 0
-    successful_chunks: int = 0
-    failed_files: list[str] = Field(default_factory=list)
-    status: str = "success"
+    """Báo cáo kết quả sau khi chạy pipeline nạp tài liệu vào Qdrant."""
+
+    total_files: int = Field(default=0, description="Tổng số file quét được")
+    total_chunks: int = Field(default=0, description="Tổng số chunk được tạo ra")
+    successful_chunks: int = Field(default=0, description="Số chunk nạp thành công vào Qdrant")
+    failed_files: list[str] = Field(
+        default_factory=list,
+        description="Danh sách tên file gặp lỗi trong quá trình xử lý",
+    )
+    status: str = Field(default="success", description="Trạng thái thực thi (success, empty, failed...)")
 
 
 class DocumentStatsResponse(BaseModel):
     """Thông tin thống kê collection trong Qdrant."""
-    collection_name: str
-    points_count: int
-    vector_size: int
-    status: str
+
+    collection_name: str = Field(..., description="Tên collection (sia_documents)")
+    points_count: int = Field(..., description="Tổng số vector points hiện có")
+    vector_size: int = Field(..., description="Số chiều của mỗi vector (1536)")
+    status: str = Field(..., description="Trạng thái hoạt động của collection")
