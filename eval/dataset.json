@@ -1,0 +1,38 @@
+[
+  {
+    "id": "q01",
+    "category": "answerable",
+    "question": "Mỗi học kỳ sinh viên phải đăng ký tối thiểu và tối đa bao nhiêu tín chỉ?",
+    "expected_keywords": ["14 tín chỉ", "24 tín chỉ"]
+  },
+  {
+    "id": "q02",
+    "category": "answerable",
+    "question": "Khi nào sinh viên bị cảnh báo học vụ?",
+    "expected_keywords": ["cảnh báo học vụ", "1.0", "1.5"]
+  },
+  {
+    "id": "q03",
+    "category": "unanswerable",
+    "question": "Trường có hỗ trợ vé máy bay du học miễn phí cho toàn bộ sinh viên năm nhất không?",
+    "expected_keywords": []
+  },
+  {
+    "id": "q04",
+    "category": "unanswerable",
+    "question": "Mức phạt tiền khi gửi xe đạp điện qua đêm tại ký túc xá khu Z là bao nhiêu?",
+    "expected_keywords": []
+  },
+  {
+    "id": "q05",
+    "category": "no_retrieval",
+    "question": "Xin chào, bạn là ai và có thể giúp gì cho mình?",
+    "expected_keywords": []
+  },
+  {
+    "id": "q06",
+    "category": "no_retrieval",
+    "question": "Cảm ơn bạn nhiều nhé!",
+    "expected_keywords": []
+  }
+]
