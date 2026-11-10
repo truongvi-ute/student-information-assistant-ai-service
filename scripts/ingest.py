@@ -15,7 +15,7 @@ sys.path.insert(0, str(project_root))
 
 from app.core.config import settings
 from app.core.logging import logger
-from app.services.ingestion.pipeline import pipeline
+from app.services.ingestion.pipeline import ingestion_pipeline
 
 
 def main():
@@ -45,7 +45,7 @@ def main():
     print("=" * 60)
 
     try:
-        result = pipeline.ingest_path(target_path, recreate_collection=args.recreate)
+        result = ingestion_pipeline.ingest_path(target_path, recreate_collection=args.recreate)
         print("\n--- KẾT QUẢ INGESTION ---")
         print(f"Trạng thái:          {result.status}")
         print(f"Tổng số chunks nạp: {result.successful_chunks}/{result.total_chunks}")

@@ -4,15 +4,15 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from app.core.config import settings
 from app.db.qdrant import get_qdrant_client
-from app.schemas.document import DocumentStatsResponse, IngestionResult
-from app.services.ingestion.pipeline import pipeline
+from app.schemas.document import CollectionStatsResponse, IngestionResult
+from app.services.ingestion.pipeline import ingestion_pipeline
 
 router = APIRouter()
 
 
-@router.post("/upload", response_model=IngestionResult)
-async def upload_and_ingest(file: UploadFile = File(...)):
-    """Upload một file tài liệu (.txt, .md, .pdf) và nạp ngay vào Vector DB."""
+@router.post("/ingest", response_model=IngestionResult)
+async def ingest_document(file: UploadFile = File(...)):
+    """Nhận một file tài liệu (.txt, .md, .pdf) và nạp (index) vào Qdrant Vector DB."""
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".txt", ".md", ".pdf"}:
         raise HTTPException(
@@ -25,7 +25,7 @@ async def upload_and_ingest(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, tmp_file)
 
     try:
-        result = pipeline.ingest_path(tmp_path)
+        result = ingestion_pipeline.ingest_path(tmp_path)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi khi nạp tài liệu: {str(e)}")
@@ -34,13 +34,13 @@ async def upload_and_ingest(file: UploadFile = File(...)):
             tmp_path.unlink()
 
 
-@router.get("/stats", response_model=DocumentStatsResponse)
+@router.get("/collection-stats", response_model=CollectionStatsResponse)
 async def get_collection_stats():
-    """Xem số lượng vector và thông số collection hiện tại trên Qdrant."""
+    """Xem số lượng vector points và thông số collection hiện tại trên Qdrant."""
     try:
         client = get_qdrant_client()
         info = client.get_collection(settings.QDRANT_COLLECTION)
-        return DocumentStatsResponse(
+        return CollectionStatsResponse(
             collection_name=settings.QDRANT_COLLECTION,
             points_count=info.points_count or 0,
             vector_size=settings.QDRANT_VECTOR_SIZE,

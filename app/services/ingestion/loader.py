@@ -2,7 +2,7 @@ from pathlib import Path
 from pypdf import PdfReader
 from app.core.exceptions import DocumentLoadError
 from app.core.logging import logger
-from app.schemas.document import Document
+from app.schemas.document import ExtractedDocument
 
 
 class DocumentLoader:
@@ -10,8 +10,8 @@ class DocumentLoader:
 
     SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
-    def load_file(self, file_path: str | Path) -> list[Document]:
-        """Đọc một file tài liệu cụ thể và trả về danh sách Document."""
+    def load_file(self, file_path: str | Path) -> list[ExtractedDocument]:
+        """Đọc một file tài liệu cụ thể và trả về danh sách ExtractedDocument."""
         path = Path(file_path)
         if not path.exists():
             raise DocumentLoadError(f"File không tồn tại: {path}")
@@ -31,7 +31,7 @@ class DocumentLoader:
 
         return []
 
-    def _load_text(self, path: Path) -> list[Document]:
+    def _load_text(self, path: Path) -> list[ExtractedDocument]:
         """Trích xuất nội dung từ file text/markdown với UTF-8."""
         text = path.read_text(encoding="utf-8").strip()
         if not text:
@@ -43,12 +43,12 @@ class DocumentLoader:
             "filename": path.name,
             "extension": path.suffix.lower(),
         }
-        return [Document(content=text, metadata=metadata)]
+        return [ExtractedDocument(content=text, metadata=metadata)]
 
-    def _load_pdf(self, path: Path) -> list[Document]:
+    def _load_pdf(self, path: Path) -> list[ExtractedDocument]:
         """Trích xuất nội dung từng trang của file PDF kèm thông tin số trang."""
         reader = PdfReader(str(path))
-        docs: list[Document] = []
+        extracted_docs: list[ExtractedDocument] = []
 
         for page_idx, page in enumerate(reader.pages):
             page_text = page.extract_text() or ""
@@ -63,13 +63,13 @@ class DocumentLoader:
                 "page_number": page_idx + 1,
                 "total_pages": len(reader.pages),
             }
-            docs.append(Document(content=page_text, metadata=metadata))
+            extracted_docs.append(ExtractedDocument(content=page_text, metadata=metadata))
 
-        if not docs:
+        if not extracted_docs:
             logger.warning("File PDF không trích xuất được chữ (hoặc file rỗng): %s", path.name)
 
-        return docs
+        return extracted_docs
 
 
 # Instance mặc định dùng cho toàn ứng dụng
-loader = DocumentLoader()
+document_loader = DocumentLoader()

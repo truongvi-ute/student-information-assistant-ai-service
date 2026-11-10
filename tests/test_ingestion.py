@@ -26,11 +26,11 @@ def test_pipeline_with_empty_and_corrupt_files():
         mock_embedding = MagicMock()
         mock_embedding.embed_texts.return_value = []
 
-        pipeline = IngestionPipeline(embed_service=mock_embedding)
+        test_pipeline = IngestionPipeline(embed_service=mock_embedding)
 
         # Mock init_collection để test không phụ thuộc vào kết nối mạng Qdrant
         with patch("app.services.ingestion.pipeline.init_collection"):
-            result = pipeline.ingest_path(empty_file)
+            result = test_pipeline.ingest_path(empty_file)
 
         assert result.status == "empty"
         assert result.successful_chunks == 0
