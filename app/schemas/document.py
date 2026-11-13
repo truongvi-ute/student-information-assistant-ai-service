@@ -2,19 +2,19 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class Document(BaseModel):
-    """Tài liệu thô được đọc từ nguồn (file .txt, .md hoặc từng trang .pdf)."""
+class ExtractedDocument(BaseModel):
+    """Đoạn/trang tài liệu thô được trích xuất từ nguồn (file .txt, .md hoặc từng trang .pdf)."""
 
-    content: str = Field(..., description="Nội dung văn bản")
+    content: str = Field(..., description="Nội dung văn bản trích xuất")
     # default_factory=dict giúp mỗi object có dict độc lập trong bộ nhớ
     metadata: dict[str, Any] = Field(
         default_factory=dict,
-        description="Metadata đi kèm (source, page, filename...)",
+        description="Metadata đi kèm (source, page_number, filename...)",
     )
 
 
 class Chunk(BaseModel):
-    """Đoạn văn bản nhỏ sau khi cắt từ Document, sẵn sàng cho embedding."""
+    """Đoạn văn bản nhỏ sau khi cắt từ ExtractedDocument, sẵn sàng cho embedding."""
 
     content: str = Field(..., description="Nội dung đoạn văn bản đã chia nhỏ")
     chunk_index: int = Field(
@@ -40,10 +40,10 @@ class IngestionResult(BaseModel):
     status: str = Field(default="success", description="Trạng thái thực thi (success, empty, failed...)")
 
 
-class DocumentStatsResponse(BaseModel):
-    """Thông tin thống kê collection trong Qdrant."""
+class CollectionStatsResponse(BaseModel):
+    """Thông tin thống kê collection vector hiện tại trong Qdrant."""
 
     collection_name: str = Field(..., description="Tên collection (sia_documents)")
-    points_count: int = Field(..., description="Tổng số vector points hiện có")
-    vector_size: int = Field(..., description="Số chiều của mỗi vector (1536)")
+    points_count: int = Field(..., description="Tổng số vector points (chunks) hiện có")
+    vector_size: int = Field(..., description="Số chiều của mỗi vector (768)")
     status: str = Field(..., description="Trạng thái hoạt động của collection")

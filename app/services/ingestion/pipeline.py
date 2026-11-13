@@ -5,10 +5,10 @@ from app.core.config import settings
 from app.core.exceptions import IngestionError
 from app.core.logging import logger
 from app.db.qdrant import get_qdrant_client, init_collection
-from app.schemas.document import Document, IngestionResult
+from app.schemas.document import ExtractedDocument, IngestionResult
 from app.services.embedding import EmbeddingService, embedding_service
-from app.services.ingestion.chunker import TextChunker, chunker
-from app.services.ingestion.loader import DocumentLoader, loader
+from app.services.ingestion.chunker import TextChunker, text_chunker
+from app.services.ingestion.loader import DocumentLoader, document_loader
 
 
 class IngestionPipeline:
@@ -16,14 +16,14 @@ class IngestionPipeline:
 
     def __init__(
         self,
-        doc_loader: DocumentLoader | None = None,
-        text_chunker: TextChunker | None = None,
+        loader: DocumentLoader | None = None,
+        chunker: TextChunker | None = None,
         embed_service: EmbeddingService | None = None,
     ):
-        self.loader = doc_loader or loader
-        self.chunker = text_chunker or chunker
-        self.embedding = embed_service or embedding_service
-        self.client = get_qdrant_client()
+        self.document_loader = loader or document_loader
+        self.text_chunker = chunker or text_chunker
+        self.embedding_service = embed_service or embedding_service
+        self.qdrant_client = get_qdrant_client()
 
     @staticmethod
     def generate_point_id(source: str, chunk_index: int) -> str:
@@ -38,10 +38,10 @@ class IngestionPipeline:
             raise IngestionError(f"Đường dẫn không tồn tại: {path}")
 
         # 1. Khởi tạo collection nếu chưa có
-        init_collection(self.client, recreate=recreate_collection)
+        init_collection(self.qdrant_client, recreate=recreate_collection)
 
         # 2. Thu thập danh sách tài liệu từ file hoặc thư mục
-        documents: list[Document] = []
+        extracted_documents: list[ExtractedDocument] = []
         failed_files: list[str] = []
         files_to_process: list[Path] = []
 
@@ -50,23 +50,23 @@ class IngestionPipeline:
         else:
             files_to_process = [
                 f for f in path.rglob("*")
-                if f.is_file() and f.suffix.lower() in self.loader.SUPPORTED_EXTENSIONS
+                if f.is_file() and f.suffix.lower() in self.document_loader.SUPPORTED_EXTENSIONS
             ]
 
         for file_item in files_to_process:
             try:
-                docs = self.loader.load_file(file_item)
-                documents.extend(docs)
+                loaded_docs = self.document_loader.load_file(file_item)
+                extracted_documents.extend(loaded_docs)
             except Exception as e:
                 logger.warning("Bỏ qua file lỗi %s: %s", file_item.name, str(e))
                 failed_files.append(file_item.name)
 
-        if not documents:
+        if not extracted_documents:
             logger.warning("Không có tài liệu hợp lệ nào để nạp từ %s", path.name)
             return IngestionResult(total_files=len(files_to_process), failed_files=failed_files, status="empty")
 
         # 3. Cắt nhỏ tài liệu thành chunks
-        chunks = self.chunker.split_documents(documents)
+        chunks = self.text_chunker.split_documents(extracted_documents)
         if not chunks:
             logger.warning("Không tạo được chunk nào từ các tài liệu.")
             return IngestionResult(total_files=len(files_to_process), failed_files=failed_files, status="no_chunks")
@@ -74,7 +74,7 @@ class IngestionPipeline:
         # 4. Tạo toạ độ vector qua Embedding Service
         logger.info("Đang tạo embedding cho %d chunks...", len(chunks))
         texts = [c.content for c in chunks]
-        embeddings = self.embedding.embed_texts(texts)
+        embeddings = self.embedding_service.embed_texts(texts)
 
         # 5. Đóng gói PointStruct kèm ID xác định (UUIDv5)
         points: list[PointStruct] = []
@@ -93,7 +93,7 @@ class IngestionPipeline:
         batch_size = 100
         for i in range(0, len(points), batch_size):
             batch = points[i : i + batch_size]
-            self.client.upsert(
+            self.qdrant_client.upsert(
                 collection_name=settings.QDRANT_COLLECTION,
                 points=batch,
             )
@@ -107,9 +107,6 @@ class IngestionPipeline:
             status="success",
         )
 
-    # Alias để hỗ trợ cả hai cách gọi: ingest_file và ingest_path
-    ingest_file = ingest_path
-
 
 # Instance mặc định dùng trong toàn bộ ứng dụng
-pipeline = IngestionPipeline()
+ingestion_pipeline = IngestionPipeline()

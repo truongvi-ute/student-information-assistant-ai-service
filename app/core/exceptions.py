@@ -25,3 +25,18 @@ class VectorDBError(SIAException):
 # 5. Lỗi khi gọi MODEL EMBEDDING
 class EmbeddingError(SIAException):
     pass  # Dùng khi: Hết tiền OpenAI, sai API Key, sai số chiều vector
+
+
+# 6. Lỗi xảy ra trong khâu TRUY XUẤT ngữ cảnh từ Vector DB
+class RetrievalError(SIAException):
+    pass  # Dùng khi: Qdrant lỗi lúc query_points, collection không truy vấn được
+
+
+# 7. Lỗi từ nhà cung cấp LLM khi SINH CÂU TRẢ LỜI
+class LLMGenerationError(SIAException):
+    pass  # Dùng khi: Gemini trả lỗi, câu trả lời rỗng, sai API Key
+
+
+# 8. Lỗi quá thời gian chờ khi gọi LLM (con của LLMGenerationError)
+class LLMTimeoutError(LLMGenerationError):
+    pass  # Dùng khi: Gemini phản hồi quá thời gian quy định (map sang HTTP 504)

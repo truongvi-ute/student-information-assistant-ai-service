@@ -1,5 +1,5 @@
 from app.core.config import settings
-from app.schemas.document import Chunk, Document
+from app.schemas.document import Chunk, ExtractedDocument
 
 
 class TextChunker:
@@ -80,8 +80,8 @@ class TextChunker:
 
         return chunks
 
-    def split_documents(self, documents: list[Document]) -> list[Chunk]:
-        """Tách nhiều Document thành danh sách Chunk."""
+    def split_documents(self, documents: list[ExtractedDocument]) -> list[Chunk]:
+        """Tách nhiều ExtractedDocument thành danh sách Chunk."""
         all_chunks: list[Chunk] = []
         for doc in documents:
             chunks = self.split_text(doc.content, metadata=doc.metadata)
@@ -89,4 +89,4 @@ class TextChunker:
         return all_chunks
 
 
-chunker = TextChunker()
+text_chunker = TextChunker()
