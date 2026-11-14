@@ -4,8 +4,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import mammoth
-import pymupdf
-import pymupdf4llm
 from markdownify import markdownify as html_to_markdown
 
 from app.core.exceptions import DocumentLoadError
@@ -45,13 +43,16 @@ class PdfMarkdownConverter(BaseDocumentConverter):
 
     def convert(self, file_bytes: bytes, filename: str) -> str:
         try:
+            import pymupdf
+            import pymupdf4llm
+
+            pymupdf4llm.use_layout(False)
             with pymupdf.open(stream=file_bytes, filetype="pdf") as pdf_doc:
                 if pdf_doc.page_count == 0:
                     return ""
                 markdown_text = pymupdf4llm.to_markdown(
                     pdf_doc,
                     show_progress=False,
-                    use_ocr=False,
                 )
             return normalize_markdown(markdown_text)
         except Exception as e:

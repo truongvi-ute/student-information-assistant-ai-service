@@ -1,74 +1,83 @@
 from pathlib import Path
-from pypdf import PdfReader
+from typing import Any, ClassVar
+
 from app.core.exceptions import DocumentLoadError
 from app.core.logging import logger
 from app.schemas.document import ExtractedDocument
+from app.services.ingestion.converters import (
+    DocumentConverterRegistry,
+    converter_registry,
+)
 
 
 class DocumentLoader:
-    """Đọc và trích xuất nội dung từ một file tài liệu (.txt, .md, .pdf)."""
+    """Đọc và chuẩn hóa tài liệu (.txt, .md, .pdf, .docx) về định dạng Markdown."""
 
-    SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
+    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {".txt", ".md", ".pdf", ".docx"}
+
+    def __init__(self, registry: DocumentConverterRegistry | None = None) -> None:
+        self.registry = registry or converter_registry
 
     def load_file(self, file_path: str | Path) -> list[ExtractedDocument]:
-        """Đọc một file tài liệu cụ thể và trả về danh sách ExtractedDocument."""
+        """Đọc một file từ đường dẫn cục bộ và chuyển thành ExtractedDocument Markdown."""
         path = Path(file_path)
         if not path.exists():
             raise DocumentLoadError(f"File không tồn tại: {path}")
 
         ext = path.suffix.lower()
         if ext not in self.SUPPORTED_EXTENSIONS:
-            raise DocumentLoadError(f"Định dạng '{ext}' chưa được hỗ trợ. Chỉ nhận: {self.SUPPORTED_EXTENSIONS}")
+            raise DocumentLoadError(
+                f"Định dạng '{ext}' chưa được hỗ trợ. Chỉ nhận: {sorted(self.SUPPORTED_EXTENSIONS)}"
+            )
 
-        try:
-            if ext in {".txt", ".md"}:
-                return self._load_text(path)
-            elif ext == ".pdf":
-                return self._load_pdf(path)
-        except Exception as e:
-            logger.error("Lỗi khi đọc file %s: %s", path.name, str(e))
-            raise DocumentLoadError(f"Không thể đọc file {path.name}: {e}") from e
+        file_bytes = path.read_bytes()
+        extra_metadata = {
+            "source": str(path.resolve()),
+        }
+        return self.load_bytes(
+            file_bytes=file_bytes,
+            filename=path.name,
+            extra_metadata=extra_metadata,
+        )
 
-        return []
+    def load_bytes(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> list[ExtractedDocument]:
+        """Chuyển đổi nội dung bytes của file thành ExtractedDocument Markdown liên tục."""
+        ext = Path(filename).suffix.lower()
+        if ext not in self.SUPPORTED_EXTENSIONS:
+            raise DocumentLoadError(
+                f"Định dạng '{ext}' chưa được hỗ trợ. Chỉ nhận: {sorted(self.SUPPORTED_EXTENSIONS)}"
+            )
 
-    def _load_text(self, path: Path) -> list[ExtractedDocument]:
-        """Trích xuất nội dung từ file text/markdown với UTF-8."""
-        text = path.read_text(encoding="utf-8").strip()
-        if not text:
-            logger.warning("File văn bản rỗng: %s", path.name)
+        if not file_bytes:
+            logger.warning("File rỗng (0 bytes): %s", filename)
             return []
 
-        metadata = {
-            "source": str(path.resolve()),
-            "filename": path.name,
-            "extension": path.suffix.lower(),
+        try:
+            markdown_text = self.registry.convert_to_markdown(file_bytes, filename)
+        except DocumentLoadError:
+            raise
+        except Exception as e:
+            logger.error("Lỗi khi trích xuất file %s: %s", filename, str(e))
+            raise DocumentLoadError(f"Không thể đọc file {filename}: {e}") from e
+
+        if not markdown_text:
+            logger.warning("File không trích xuất được nội dung văn bản: %s", filename)
+            return []
+
+        metadata: dict[str, Any] = {
+            "source": filename,
+            "filename": filename,
+            "extension": ext,
         }
-        return [ExtractedDocument(content=text, metadata=metadata)]
+        if extra_metadata:
+            metadata.update(extra_metadata)
 
-    def _load_pdf(self, path: Path) -> list[ExtractedDocument]:
-        """Trích xuất nội dung từng trang của file PDF kèm thông tin số trang."""
-        reader = PdfReader(str(path))
-        extracted_docs: list[ExtractedDocument] = []
-
-        for page_idx, page in enumerate(reader.pages):
-            page_text = page.extract_text() or ""
-            page_text = page_text.strip()
-            if not page_text:
-                continue
-
-            metadata = {
-                "source": str(path.resolve()),
-                "filename": path.name,
-                "extension": ".pdf",
-                "page_number": page_idx + 1,
-                "total_pages": len(reader.pages),
-            }
-            extracted_docs.append(ExtractedDocument(content=page_text, metadata=metadata))
-
-        if not extracted_docs:
-            logger.warning("File PDF không trích xuất được chữ (hoặc file rỗng): %s", path.name)
-
-        return extracted_docs
+        return [ExtractedDocument(content=markdown_text, metadata=metadata)]
 
 
 # Instance mặc định dùng cho toàn ứng dụng
