@@ -14,20 +14,26 @@ class EmbeddingService:
         api_key: str | None = None,
         model: str | None = None,
         rpm_limit: int | None = None,
+        timeout_seconds: float | None = None,
     ):
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model = model or settings.EMBEDDING_MODEL
         self.expected_dim = settings.QDRANT_VECTOR_SIZE
         self.rpm_limit = settings.EMBEDDING_RPM_LIMIT if rpm_limit is None else rpm_limit
+        self.timeout_seconds = (
+            settings.GEMINI_TIMEOUT_SECONDS
+            if timeout_seconds is None
+            else timeout_seconds
+        )
 
         self._configured = False
         self._window_start: float | None = None
         self._window_count = 0
 
     def _ensure_configured(self) -> None:
-        """Cấu hình Gemini API key theo cơ chế lazy loading."""
+        """Cấu hình Gemini API key theo cơ chế lazy loading với HTTP REST transport."""
         if not self._configured:
-            genai.configure(api_key=self.api_key)
+            genai.configure(api_key=self.api_key, transport="rest")
             self._configured = True
 
     def _validate_vector(self, vector: list[float]) -> None:
@@ -77,6 +83,7 @@ class EmbeddingService:
                 content=content,
                 task_type=task_type,
                 output_dimensionality=self.expected_dim,
+                request_options={"timeout": self.timeout_seconds},
             )
             return result["embedding"]
         except Exception as e:
