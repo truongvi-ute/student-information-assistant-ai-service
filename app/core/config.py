@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Gemini API
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
     EMBEDDING_MODEL: str = "models/gemini-embedding-001"
+    EMBEDDING_RPM_LIMIT: int = 80  # Đặt 0 nếu dùng gói trả phí để tắt giới hạn chờ mỗi phút
     CHAT_MODEL: str = "gemini-2.5-flash"
 
     # Vector DB (Qdrant)
