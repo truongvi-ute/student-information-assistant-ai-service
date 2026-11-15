@@ -1,5 +1,9 @@
 from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
+
+from app.core.exceptions import LLMTimeoutError
 from app.main import app
 from app.schemas.response import RetrievedChunk
 from app.services.inference.generator import NO_CONTEXT_FALLBACK_ANSWER, RAGGenerator
@@ -64,4 +68,18 @@ def test_api_validation_rejects_invalid_top_k_or_blank_query():
 
     res_top_k = client.post("/v1/chat", json={"question": "Hỏi hợp lệ", "top_k": 99})
     assert res_top_k.status_code == 422
+
+
+def test_generator_passes_timeout_and_maps_read_timeout():
+    """Kiểm tra generate_answer truyền timeout và ánh xạ 'timed out' sang LLMTimeoutError."""
+    generator = RAGGenerator(retriever=MagicMock(), timeout_seconds=12.5)
+    mock_model = MagicMock()
+    mock_model.generate_content.side_effect = Exception("HTTPSConnectionPool: Read timed out.")
+    generator._model = mock_model
+
+    with pytest.raises(LLMTimeoutError):
+        generator.generate_answer("Prompt kiểm thử")
+
+    call_kwargs = mock_model.generate_content.call_args.kwargs
+    assert call_kwargs["request_options"] == {"timeout": 12.5}
 

@@ -100,6 +100,32 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
+## 📥 Nạp tài liệu từ đường dẫn qua CLI (Ingestion)
+
+Đảm bảo container Qdrant đang chạy (`docker compose up -d`), đã cấu hình `GEMINI_API_KEY` trong `.env`, và terminal đang đứng tại thư mục `sia-ai-service` (`.venv` đã kích hoạt hoặc gọi trực tiếp Python trong `.venv`).
+
+Các định dạng hỗ trợ: `.txt`, `.md`, `.pdf`, `.docx`.
+
+- **Nạp toàn bộ thư mục mặc định (`./data`):**
+  ```bash
+  python scripts/ingest.py
+  ```
+
+- **Nạp từ một file hoặc thư mục cụ thể (`--path`):**
+  ```powershell
+  # Ví dụ trên Windows PowerShell trỏ tới file ở thư mục cha
+  .\.venv\Scripts\python.exe scripts\ingest.py --path ..\duong_dan_toi_file.pdf
+  ```
+
+- **Xóa collection cũ và nạp lại từ đầu (`--recreate`):**
+  ```powershell
+  .\.venv\Scripts\python.exe scripts\ingest.py --path ..\duong_dan_toi_file.pdf --recreate
+  ```
+
+> **Lưu ý về Gemini Free Tier:** Mặc định `EMBEDDING_RPM_LIMIT=80` (cấu hình trong `app/core/config.py` hoặc `.env`). Nếu tài liệu tạo ra nhiều hơn 80 chunks, CLI sẽ chủ động tạm dừng ~60 giây trước khi gửi tiếp sang cửa sổ phút mới để tránh lỗi `429`. Đặt `EMBEDDING_RPM_LIMIT=0` trong `.env` nếu dùng gói trả phí.
+
+---
+
 ## 📁 Directory Structure
 
 ```text

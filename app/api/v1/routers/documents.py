@@ -1,10 +1,12 @@
-import shutil
-import tempfile
 from pathlib import Path
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
+
 from app.core.config import settings
+from app.core.exceptions import DocumentLoadError, IngestionError
 from app.db.qdrant import get_qdrant_client
 from app.schemas.document import CollectionStatsResponse, IngestionResult
+from app.services.ingestion.loader import document_loader
 from app.services.ingestion.pipeline import ingestion_pipeline
 
 router = APIRouter()
@@ -12,26 +14,34 @@ router = APIRouter()
 
 @router.post("/ingest", response_model=IngestionResult)
 async def ingest_document(file: UploadFile = File(...)):
-    """Nhận một file tài liệu (.txt, .md, .pdf) và nạp (index) vào Qdrant Vector DB."""
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in {".txt", ".md", ".pdf"}:
+    """Nhận một file tài liệu (.txt, .md, .pdf, .docx) và nạp vào Qdrant Vector DB."""
+    filename = Path(file.filename or "").name
+    if not filename:
+        raise HTTPException(status_code=400, detail="Tên file không hợp lệ.")
+
+    suffix = Path(filename).suffix.lower()
+    if suffix not in document_loader.SUPPORTED_EXTENSIONS:
+        supported = ", ".join(sorted(document_loader.SUPPORTED_EXTENSIONS))
         raise HTTPException(
             status_code=400,
-            detail=f"Định dạng '{suffix}' không được hỗ trợ. Chỉ chấp nhận .txt, .md, .pdf",
+            detail=f"Định dạng '{suffix}' không được hỗ trợ. Chỉ chấp nhận: {supported}",
         )
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-        tmp_path = Path(tmp_file.name)
-        shutil.copyfileobj(file.file, tmp_file)
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="File tải lên bị rỗng.")
 
     try:
-        result = ingestion_pipeline.ingest_path(tmp_path)
-        return result
+        return ingestion_pipeline.ingest_bytes(
+            file_bytes=file_bytes,
+            filename=filename,
+        )
+    except (DocumentLoadError, IngestionError) as e:
+        raise HTTPException(status_code=400, detail=e.message) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi khi nạp tài liệu: {str(e)}")
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+        raise HTTPException(
+            status_code=500, detail=f"Lỗi khi nạp tài liệu: {str(e)}"
+        ) from e
 
 
 @router.get("/collection-stats", response_model=CollectionStatsResponse)
@@ -47,4 +57,6 @@ async def get_collection_stats():
             status=info.status.value if info.status else "unknown",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi truy vấn Qdrant: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Lỗi truy vấn Qdrant: {str(e)}"
+        ) from e

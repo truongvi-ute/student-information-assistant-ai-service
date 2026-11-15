@@ -1,6 +1,9 @@
 import uuid
 from pathlib import Path
+from typing import Any
+
 from qdrant_client.http.models import PointStruct
+
 from app.core.config import settings
 from app.core.exceptions import IngestionError
 from app.core.logging import logger
@@ -31,26 +34,92 @@ class IngestionPipeline:
         unique_key = f"{source}::{chunk_index}"
         return str(uuid.uuid5(uuid.NAMESPACE_URL, unique_key))
 
-    def ingest_path(self, target_path: str | Path, recreate_collection: bool = False) -> IngestionResult:
-        """Nạp tài liệu từ một file cụ thể hoặc toàn bộ thư mục vào Qdrant."""
+    def _index_documents(
+        self,
+        extracted_documents: list[ExtractedDocument],
+        total_files: int,
+        failed_files: list[str],
+    ) -> IngestionResult:
+        """Thực thi phần chung: cắt chunk -> tạo embedding -> upsert vào Qdrant."""
+        if not extracted_documents:
+            return IngestionResult(
+                total_files=total_files,
+                failed_files=failed_files,
+                status="empty",
+            )
+
+        chunks = self.text_chunker.split_documents(extracted_documents)
+        if not chunks:
+            logger.warning("Không tạo được chunk nào từ các tài liệu.")
+            return IngestionResult(
+                total_files=total_files,
+                failed_files=failed_files,
+                status="no_chunks",
+            )
+
+        logger.info("Đang tạo embedding cho %d chunks...", len(chunks))
+        texts = [c.content for c in chunks]
+        embeddings = self.embedding_service.embed_texts(texts)
+
+        points: list[PointStruct] = []
+        for chunk, vector in zip(chunks, embeddings):
+            doc_id = chunk.metadata.get("document_id")
+            id_source = (
+                f"doc:{doc_id}"
+                if doc_id
+                else chunk.metadata.get("source", "unknown")
+            )
+            point_id = self.generate_point_id(str(id_source), chunk.chunk_index)
+            payload = {
+                "content": chunk.content,
+                "chunk_index": chunk.chunk_index,
+                **chunk.metadata,
+            }
+            points.append(PointStruct(id=point_id, vector=vector, payload=payload))
+
+        logger.info(
+            "Đang lưu %d points vào Qdrant collection '%s'...",
+            len(points),
+            settings.QDRANT_COLLECTION,
+        )
+        batch_size = 100
+        for i in range(0, len(points), batch_size):
+            batch = points[i : i + batch_size]
+            self.qdrant_client.upsert(
+                collection_name=settings.QDRANT_COLLECTION,
+                points=batch,
+            )
+
+        logger.info("Nạp thành công %d chunks vào Qdrant.", len(points))
+        return IngestionResult(
+            total_files=total_files,
+            total_chunks=len(chunks),
+            successful_chunks=len(points),
+            failed_files=failed_files,
+            status="success",
+        )
+
+    def ingest_path(
+        self, target_path: str | Path, recreate_collection: bool = False
+    ) -> IngestionResult:
+        """Nạp tài liệu từ một file cục bộ hoặc toàn bộ thư mục vào Qdrant."""
         path = Path(target_path)
         if not path.exists():
             raise IngestionError(f"Đường dẫn không tồn tại: {path}")
 
-        # 1. Khởi tạo collection nếu chưa có
         init_collection(self.qdrant_client, recreate=recreate_collection)
 
-        # 2. Thu thập danh sách tài liệu từ file hoặc thư mục
         extracted_documents: list[ExtractedDocument] = []
         failed_files: list[str] = []
-        files_to_process: list[Path] = []
 
         if path.is_file():
             files_to_process = [path]
         else:
             files_to_process = [
-                f for f in path.rglob("*")
-                if f.is_file() and f.suffix.lower() in self.document_loader.SUPPORTED_EXTENSIONS
+                f
+                for f in path.rglob("*")
+                if f.is_file()
+                and f.suffix.lower() in self.document_loader.SUPPORTED_EXTENSIONS
             ]
 
         for file_item in files_to_process:
@@ -63,48 +132,40 @@ class IngestionPipeline:
 
         if not extracted_documents:
             logger.warning("Không có tài liệu hợp lệ nào để nạp từ %s", path.name)
-            return IngestionResult(total_files=len(files_to_process), failed_files=failed_files, status="empty")
 
-        # 3. Cắt nhỏ tài liệu thành chunks
-        chunks = self.text_chunker.split_documents(extracted_documents)
-        if not chunks:
-            logger.warning("Không tạo được chunk nào từ các tài liệu.")
-            return IngestionResult(total_files=len(files_to_process), failed_files=failed_files, status="no_chunks")
-
-        # 4. Tạo toạ độ vector qua Embedding Service
-        logger.info("Đang tạo embedding cho %d chunks...", len(chunks))
-        texts = [c.content for c in chunks]
-        embeddings = self.embedding_service.embed_texts(texts)
-
-        # 5. Đóng gói PointStruct kèm ID xác định (UUIDv5)
-        points: list[PointStruct] = []
-        for chunk, vector in zip(chunks, embeddings):
-            src = chunk.metadata.get("source", "unknown")
-            point_id = self.generate_point_id(src, chunk.chunk_index)
-            payload = {
-                "content": chunk.content,
-                "chunk_index": chunk.chunk_index,
-                **chunk.metadata,
-            }
-            points.append(PointStruct(id=point_id, vector=vector, payload=payload))
-
-        # 6. Đẩy vào Qdrant (Upsert theo từng mẻ 100 điểm)
-        logger.info("Đang lưu %d points vào Qdrant collection '%s'...", len(points), settings.QDRANT_COLLECTION)
-        batch_size = 100
-        for i in range(0, len(points), batch_size):
-            batch = points[i : i + batch_size]
-            self.qdrant_client.upsert(
-                collection_name=settings.QDRANT_COLLECTION,
-                points=batch,
-            )
-
-        logger.info("Nạp thành công %d chunks vào Qdrant.", len(points))
-        return IngestionResult(
+        return self._index_documents(
+            extracted_documents=extracted_documents,
             total_files=len(files_to_process),
-            total_chunks=len(chunks),
-            successful_chunks=len(points),
             failed_files=failed_files,
-            status="success",
+        )
+
+    def ingest_bytes(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        metadata: dict[str, Any] | None = None,
+        recreate_collection: bool = False,
+    ) -> IngestionResult:
+        """Nạp trực tiếp dữ liệu nhị phân (từ UploadFile hoặc Storage) vào Qdrant."""
+        if not filename or not filename.strip():
+            raise IngestionError("Thiếu tên file (filename) khi nạp tài liệu.")
+
+        init_collection(self.qdrant_client, recreate=recreate_collection)
+
+        try:
+            loaded_docs = self.document_loader.load_bytes(
+                file_bytes=file_bytes,
+                filename=filename,
+                extra_metadata=metadata,
+            )
+        except Exception as e:
+            logger.error("Lỗi khi nạp file từ bytes '%s': %s", filename, str(e))
+            raise IngestionError(f"Không thể nạp file '{filename}': {e}") from e
+
+        return self._index_documents(
+            extracted_documents=loaded_docs,
+            total_files=1,
+            failed_files=[],
         )
 
 
