@@ -16,6 +16,7 @@ dependencies = [
     "pymupdf4llm>=0.0.17",
     "mammoth>=1.8.0",
     "markdownify>=0.13.1",
+    "boto3>=1.35.0",
 ]
 
 [project.optional-dependencies]

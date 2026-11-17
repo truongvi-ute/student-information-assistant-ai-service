@@ -37,5 +37,16 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
 
+    # Storage Settings (RustFS Dev / S3 Prod)
+    STORAGE_ENDPOINT_URL: str = "http://localhost:9000"
+    STORAGE_ACCESS_KEY: str = "sia-minio"
+    STORAGE_SECRET_KEY: str = "12345678"
+    STORAGE_BUCKET_NAME: str = "sia-documents"
+    STORAGE_REGION: str = "us-east-1"
+
+    # Internal Backend Callback
+    BACKEND_INTERNAL_URL: str = "http://localhost:8080"
+    INTERNAL_API_KEY: str = "sia-internal-secret-change-me"
+
 
 settings = Settings()
