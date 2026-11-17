@@ -40,3 +40,8 @@ class LLMGenerationError(SIAException):
 # 8. Lỗi quá thời gian chờ khi gọi LLM (con của LLMGenerationError)
 class LLMTimeoutError(LLMGenerationError):
     pass  # Dùng khi: Gemini phản hồi quá thời gian quy định (map sang HTTP 504)
+
+
+# 9. Lỗi khi thao tác với Object Storage (RustFS / S3)
+class StorageError(IngestionError):
+    pass  # Dùng khi: Không thể tải hoặc ghi file lên RustFS/S3
