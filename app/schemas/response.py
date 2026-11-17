@@ -9,8 +9,11 @@ class RetrievedChunk(BaseModel):
     content: str = Field(..., description="Nội dung đoạn văn bản")
     score: float = Field(..., description="Điểm tương đồng Cosine")
     chunk_index: int = Field(default=0, description="Số thứ tự chunk trong tài liệu")
+    document_id: str | None = Field(default=None, description="UUID tài liệu gốc từ Backend")
     filename: str | None = Field(default=None, description="Tên file tài liệu nguồn")
     page_number: int | None = Field(default=None, description="Số trang (nếu là file PDF)")
+    char_start: int | None = Field(default=None, description="Vị trí ký tự bắt đầu của chunk")
+    char_end: int | None = Field(default=None, description="Vị trí ký tự kết thúc của chunk")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Toàn bộ metadata đi kèm")
 
 
@@ -25,11 +28,15 @@ class SearchResponse(BaseModel):
 class SourceCitation(BaseModel):
     """Thông tin trích dẫn nguồn tài liệu đính kèm câu trả lời."""
 
+    document_id: str | None = Field(default=None, description="UUID tài liệu gốc")
     filename: str = Field(..., description="Tên file tài liệu")
     page_number: int | None = Field(default=None, description="Trang số mấy trong file PDF")
     chunk_index: int = Field(default=0, description="Chỉ số đoạn văn bản")
+    char_start: int | None = Field(default=None, description="Vị trí ký tự bắt đầu trong Markdown chuẩn hóa")
+    char_end: int | None = Field(default=None, description="Vị trí ký tự kết thúc trong Markdown chuẩn hóa")
     score: float = Field(..., description="Điểm tương đồng với câu hỏi")
     snippet: str = Field(..., description="Trích đoạn nội dung ngắn")
+    content: str = Field(default="", description="Toàn bộ nội dung đoạn chunk")
 
 
 class ChatResponse(BaseModel):
