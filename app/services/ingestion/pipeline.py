@@ -2,7 +2,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from qdrant_client.http.models import PointStruct
+from qdrant_client.http.models import (
+    FieldCondition,
+    Filter,
+    FilterSelector,
+    MatchValue,
+    PointStruct,
+)
 
 from app.core.config import settings
 from app.core.exceptions import IngestionError
@@ -12,6 +18,7 @@ from app.schemas.document import ExtractedDocument, IngestionResult
 from app.services.embedding import EmbeddingService, embedding_service
 from app.services.ingestion.chunker import TextChunker, text_chunker
 from app.services.ingestion.loader import DocumentLoader, document_loader
+from app.services.storage import StorageAdapter, storage_adapter
 
 
 class IngestionPipeline:
@@ -22,10 +29,12 @@ class IngestionPipeline:
         loader: DocumentLoader | None = None,
         chunker: TextChunker | None = None,
         embed_service: EmbeddingService | None = None,
+        storage: StorageAdapter | None = None,
     ):
         self.document_loader = loader or document_loader
         self.text_chunker = chunker or text_chunker
         self.embedding_service = embed_service or embedding_service
+        self.storage_adapter = storage or storage_adapter
         self.qdrant_client = get_qdrant_client()
 
     @staticmethod
@@ -34,13 +43,35 @@ class IngestionPipeline:
         unique_key = f"{source}::{chunk_index}"
         return str(uuid.uuid5(uuid.NAMESPACE_URL, unique_key))
 
+    @staticmethod
+    def build_extracted_markdown_key(document_id: str) -> str:
+        """Quy ước object key của bản Markdown chuẩn hóa trên RustFS/S3."""
+        return f"extracted/{document_id}.md"
+
+    def _delete_existing_document_points(self, document_id: str) -> None:
+        """Xóa toàn bộ points cũ của document_id trong Qdrant trước khi upsert bản mới."""
+        self.qdrant_client.delete(
+            collection_name=settings.QDRANT_COLLECTION,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="document_id",
+                            match=MatchValue(value=document_id),
+                        )
+                    ]
+                )
+            ),
+        )
+
     def _index_documents(
         self,
         extracted_documents: list[ExtractedDocument],
         total_files: int,
         failed_files: list[str],
+        upload_extracted_markdown: bool = False,
     ) -> IngestionResult:
-        """Thực thi phần chung: cắt chunk -> tạo embedding -> upsert vào Qdrant."""
+        """Thực thi phần chung: cắt chunk -> tạo embedding -> lưu Markdown (nếu cần) -> upsert vào Qdrant."""
         if not extracted_documents:
             return IngestionResult(
                 total_files=total_files,
@@ -56,6 +87,12 @@ class IngestionPipeline:
                 failed_files=failed_files,
                 status="no_chunks",
             )
+
+        doc_contents: dict[str, str] = {}
+        for doc in extracted_documents:
+            raw_doc_id = doc.metadata.get("document_id")
+            if raw_doc_id:
+                doc_contents[str(raw_doc_id)] = doc.content
 
         logger.info("Đang tạo embedding cho %d chunks...", len(chunks))
         texts = [c.content for c in chunks]
@@ -73,9 +110,14 @@ class IngestionPipeline:
             payload = {
                 "content": chunk.content,
                 "chunk_index": chunk.chunk_index,
+                "char_start": chunk.char_start,
+                "char_end": chunk.char_end,
                 **chunk.metadata,
             }
             points.append(PointStruct(id=point_id, vector=vector, payload=payload))
+
+        for doc_id in doc_contents:
+            self._delete_existing_document_points(doc_id)
 
         logger.info(
             "Đang lưu %d points vào Qdrant collection '%s'...",
@@ -89,6 +131,12 @@ class IngestionPipeline:
                 collection_name=settings.QDRANT_COLLECTION,
                 points=batch,
             )
+
+        if upload_extracted_markdown:
+            for doc_id, markdown_content in doc_contents.items():
+                extracted_key = self.build_extracted_markdown_key(doc_id)
+                self.storage_adapter.upload_text(extracted_key, markdown_content)
+                logger.info("Đã lưu bản Markdown chuẩn hóa lên Storage: %s", extracted_key)
 
         logger.info("Nạp thành công %d chunks vào Qdrant.", len(points))
         return IngestionResult(
@@ -145,6 +193,7 @@ class IngestionPipeline:
         filename: str,
         metadata: dict[str, Any] | None = None,
         recreate_collection: bool = False,
+        upload_extracted_markdown: bool = False,
     ) -> IngestionResult:
         """Nạp trực tiếp dữ liệu nhị phân (từ UploadFile hoặc Storage) vào Qdrant."""
         if not filename or not filename.strip():
@@ -166,6 +215,34 @@ class IngestionPipeline:
             extracted_documents=loaded_docs,
             total_files=1,
             failed_files=[],
+            upload_extracted_markdown=upload_extracted_markdown,
+        )
+
+    def ingest_from_storage(
+        self,
+        document_id: str,
+        file_key: str,
+        filename: str,
+        metadata: dict[str, Any] | None = None,
+        recreate_collection: bool = False,
+    ) -> IngestionResult:
+        """Kéo file từ RustFS/S3 theo file_key, lưu bản Markdown chuẩn hóa và nạp vào Qdrant."""
+        if not document_id or not document_id.strip():
+            raise IngestionError("Thiếu document_id khi nạp tài liệu từ Storage.")
+
+        cleaned_doc_id = document_id.strip()
+        file_bytes = self.storage_adapter.download_file(file_key)
+        merged_metadata: dict[str, Any] = {
+            **(metadata or {}),
+            "document_id": cleaned_doc_id,
+            "storage_path": file_key,
+        }
+        return self.ingest_bytes(
+            file_bytes=file_bytes,
+            filename=filename,
+            metadata=merged_metadata,
+            recreate_collection=recreate_collection,
+            upload_extracted_markdown=True,
         )
 
 
