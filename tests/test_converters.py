@@ -60,3 +60,26 @@ def test_convert_pdf_merges_pages_into_single_markdown_stream():
 def test_convert_unsupported_extension_raises_error():
     with pytest.raises(DocumentLoadError):
         converter_registry.convert_to_markdown(b"binary", "bang_diem.xlsx")
+
+
+def test_convert_docx_strips_embedded_base64_images():
+    """Ảnh nhúng trong .docx phải bị bỏ qua, không sinh chuỗi base64 khổng lồ vào Markdown."""
+    # Tạo 1 PNG 1x1 tối giản và nhúng vào .docx
+    png_1x1 = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00"
+        b"\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    document = docx.Document()
+    document.add_heading("Chương trình đào tạo", level=1)
+    document.add_picture(io.BytesIO(png_1x1))
+    document.add_paragraph("Tổng số tín chỉ: 150")
+    buf = io.BytesIO()
+    document.save(buf)
+
+    md = converter_registry.convert_to_markdown(buf.getvalue(), "ctdt.docx")
+
+    assert "data:image" not in md
+    assert "base64" not in md
+    assert "# Chương trình đào tạo" in md
+    assert "Tổng số tín chỉ: 150" in md

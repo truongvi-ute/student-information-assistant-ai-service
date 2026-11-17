@@ -207,8 +207,13 @@ class TextChunker:
 
     def _split_text_by_separators(self, text: str, separators: list[str]) -> list[str]:
         """Tách đệ quy đoạn văn dài theo danh sách ký tự phân cách ưu tiên."""
-        if len(text) <= self.chunk_size or not separators:
+        if len(text) <= self.chunk_size:
             return [text]
+        if not separators:
+            return [
+                text[i : i + self.chunk_size]
+                for i in range(0, len(text), self.chunk_size)
+            ]
 
         sep = separators[0]
         remaining_seps = separators[1:]
@@ -322,7 +327,10 @@ class TextChunker:
                         source_text=text,
                     )
                 )
-            elif block.kind == "text" and len(block.content) > self.chunk_size:
+            elif (
+                block.kind in {"text", "heading"}
+                and len(block.content) > self.chunk_size
+            ):
                 units.extend(
                     self._split_prose_with_overlap(
                         block.content,

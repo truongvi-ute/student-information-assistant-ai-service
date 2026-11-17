@@ -130,3 +130,16 @@ def test_chunker_oversized_table_offsets():
         assert 0 <= chunk.char_start < chunk.char_end <= len(text)
     assert "| Giải tích 1 | 3 |" in text[chunks[0].char_start : chunks[0].char_end]
     assert "| Cấu trúc dữ liệu | 4 |" in text[chunks[-1].char_start : chunks[-1].char_end]
+
+
+def test_chunker_hard_splits_unbroken_token_and_keeps_offsets():
+    """Chuỗi dài không có dấu cách vẫn phải bị cắt nhỏ theo chunk_size và giữ offset hợp lệ."""
+    chunker = TextChunker(chunk_size=100, chunk_overlap=20)
+    text = "X" * 250
+    chunks = chunker.split_text(text)
+
+    assert len(chunks) >= 3
+    for chunk in chunks:
+        assert len(chunk.content) <= 100
+        assert chunk.char_start is not None and chunk.char_end is not None
+        assert 0 <= chunk.char_start < chunk.char_end <= len(text)

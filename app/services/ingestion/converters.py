@@ -9,9 +9,14 @@ from markdownify import markdownify as html_to_markdown
 from app.core.exceptions import DocumentLoadError
 
 
+_DATA_IMAGE_MD_RE = re.compile(r"!\[[^\]]*\]\(data:image/[^)]+\)")
+
+
 def normalize_markdown(text: str) -> str:
     """Chuẩn hóa khoảng trắng và xuống dòng thừa mà không phá vỡ cấu trúc Markdown."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Loại bỏ ảnh base64 nhúng trực tiếp để tránh phình to chunk và tràn token embedding
+    text = _DATA_IMAGE_MD_RE.sub("", text)
     # Gộp từ 3 dòng trống liên tiếp trở lên thành 2 dòng trống
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -67,7 +72,11 @@ class DocxMarkdownConverter(BaseDocumentConverter):
     def convert(self, file_bytes: bytes, filename: str) -> str:
         try:
             with io.BytesIO(file_bytes) as stream:
-                result = mammoth.convert_to_html(stream)
+                # Bỏ qua ảnh nhúng trong .docx thay vì convert sang base64 data URI khổng lồ
+                result = mammoth.convert_to_html(
+                    stream,
+                    convert_image=lambda _image: [],
+                )
                 html_content = result.value
 
             if not html_content or not html_content.strip():
@@ -77,6 +86,7 @@ class DocxMarkdownConverter(BaseDocumentConverter):
                 html_content,
                 heading_style="ATX",
                 bullets="-",
+                strip=["img"],
             )
             return normalize_markdown(markdown_text)
         except Exception as e:
