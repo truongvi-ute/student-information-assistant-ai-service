@@ -6,9 +6,11 @@ from unittest.mock import MagicMock, patch
 import docx
 import pytest
 from fastapi import UploadFile
+from fastapi.testclient import TestClient
 
-from app.api.v1.routers.documents import ingest_document
-from app.schemas.document import IngestionResult
+from app.api.v1.routers.documents import _run_storage_ingestion_task, ingest_document
+from app.main import app
+from app.schemas.document import IngestFromStorageRequest, IngestionResult
 from app.services.ingestion.pipeline import IngestionPipeline
 
 
@@ -117,3 +119,124 @@ def test_upload_endpoint_accepts_docx():
         file_bytes=docx_bytes,
         filename="huong_dan.docx",
     )
+
+
+def test_pipeline_ingest_from_storage_uploads_markdown_and_deletes_old_points():
+    """Kiểm tra ingest_from_storage tải file từ RustFS, xóa point cũ, upsert payload kèm offset và lưu extracted markdown."""
+    docx_bytes = _create_docx_bytes("Sinh viên nộp học phí đúng hạn quy định.")
+
+    mock_storage = MagicMock()
+    mock_storage.download_file.return_value = docx_bytes
+
+    mock_embedding = MagicMock()
+    mock_embedding.embed_texts.return_value = [[0.2] * 768]
+
+    mock_qdrant = MagicMock()
+    with patch(
+        "app.services.ingestion.pipeline.get_qdrant_client", return_value=mock_qdrant
+    ):
+        test_pipeline = IngestionPipeline(
+            embed_service=mock_embedding,
+            storage=mock_storage,
+        )
+
+    with patch("app.services.ingestion.pipeline.init_collection"):
+        result = test_pipeline.ingest_from_storage(
+            document_id="doc-99",
+            file_key="documents/doc-99.docx",
+            filename="hoc_phi.docx",
+            metadata={"title": "Quy định học phí"},
+        )
+
+    assert result.status == "success"
+    assert result.successful_chunks == 1
+    mock_storage.download_file.assert_called_once_with("documents/doc-99.docx")
+    mock_qdrant.delete.assert_called_once()
+
+    upserted_points = mock_qdrant.upsert.call_args.kwargs["points"]
+    payload = upserted_points[0].payload
+    assert payload["document_id"] == "doc-99"
+    assert payload["storage_path"] == "documents/doc-99.docx"
+    assert payload["filename"] == "hoc_phi.docx"
+    assert payload["char_start"] == 0
+    assert payload["char_end"] > 0
+
+    mock_storage.upload_text.assert_called_once()
+    uploaded_key, uploaded_markdown = mock_storage.upload_text.call_args.args
+    assert uploaded_key == "extracted/doc-99.md"
+    assert "# Thông báo học vụ" in uploaded_markdown
+
+
+def test_ingest_from_storage_endpoint_validates_and_accepts():
+    """Kiểm tra endpoint POST /v1/documents/ingest-from-storage trả 400 nếu đuôi file sai và 202 nếu hợp lệ."""
+    client = TestClient(app)
+
+    bad_res = client.post(
+        "/v1/documents/ingest-from-storage",
+        json={
+            "document_id": "doc-1",
+            "file_key": "documents/doc-1.exe",
+            "filename": "virus.exe",
+        },
+    )
+    assert bad_res.status_code == 400
+
+    with patch("app.api.v1.routers.documents._run_storage_ingestion_task") as mock_task:
+        ok_res = client.post(
+            "/v1/documents/ingest-from-storage",
+            json={
+                "document_id": "doc-2",
+                "file_key": "documents/doc-2.pdf",
+                "filename": "quy_che.pdf",
+            },
+        )
+
+    assert ok_res.status_code == 202
+    assert ok_res.json()["status"] == "processing"
+    assert ok_res.json()["document_id"] == "doc-2"
+    mock_task.assert_called_once()
+
+
+def test_run_storage_ingestion_task_sends_ready_and_failed_callbacks():
+    """Kiểm tra background task gửi callback READY hoặc FAILED kèm X-Internal-Api-Key."""
+    payload = IngestFromStorageRequest(
+        document_id="doc-3",
+        file_key="documents/doc-3.pdf",
+        filename="quy_che.pdf",
+        callback_url="http://localhost:8080/api/internal/documents/doc-3/rag-status",
+    )
+
+    with (
+        patch(
+            "app.api.v1.routers.documents.ingestion_pipeline.ingest_from_storage",
+            return_value=IngestionResult(
+                total_files=1,
+                total_chunks=4,
+                successful_chunks=4,
+                failed_files=[],
+                status="success",
+            ),
+        ),
+        patch("app.api.v1.routers.documents.httpx.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        _run_storage_ingestion_task(payload)
+
+    assert mock_post.call_count == 1
+    assert mock_post.call_args.kwargs["json"]["status"] == "READY"
+    assert mock_post.call_args.kwargs["json"]["total_chunks"] == 4
+    assert "X-Internal-Api-Key" in mock_post.call_args.kwargs["headers"]
+
+    with (
+        patch(
+            "app.api.v1.routers.documents.ingestion_pipeline.ingest_from_storage",
+            side_effect=RuntimeError("RustFS timeout"),
+        ),
+        patch("app.api.v1.routers.documents.httpx.post") as mock_post_err,
+    ):
+        mock_post_err.return_value = MagicMock()
+        _run_storage_ingestion_task(payload)
+
+    assert mock_post_err.call_count == 1
+    assert mock_post_err.call_args.kwargs["json"]["status"] == "FAILED"
+    assert "RustFS timeout" in mock_post_err.call_args.kwargs["json"]["error_message"]

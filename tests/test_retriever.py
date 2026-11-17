@@ -26,8 +26,11 @@ def test_retriever_returns_matching_chunks_and_applies_filter():
     mock_point.payload = {
         "content": "Sinh viên phải đăng ký tối thiểu 14 tín chỉ.",
         "chunk_index": 0,
+        "document_id": "11111111-1111-1111-1111-111111111111",
         "filename": "quy_che.pdf",
         "page_number": 2,
+        "char_start": 120,
+        "char_end": 165,
     }
     mock_response = MagicMock()
     mock_response.points = [mock_point]
@@ -40,8 +43,11 @@ def test_retriever_returns_matching_chunks_and_applies_filter():
     results = service.retrieve("Đăng ký tối thiểu bao nhiêu tín chỉ?", top_k=3, filename_filter="quy_che.pdf")
 
     assert len(results) == 1
+    assert results[0].document_id == "11111111-1111-1111-1111-111111111111"
     assert results[0].filename == "quy_che.pdf"
     assert results[0].page_number == 2
+    assert results[0].char_start == 120
+    assert results[0].char_end == 165
     assert results[0].score == 0.89
 
     # Kiểm tra query_filter đã được truyền vào query_points
