@@ -1,4 +1,3 @@
-import re
 import time
 
 import google.generativeai as genai
@@ -7,12 +6,11 @@ from app.core.config import settings
 from app.core.exceptions import EmbeddingError
 from app.core.logging import logger
 
-_RETRY_IN_RE = re.compile(r"retry in\s+(\d+(?:\.\d+)?)s", re.IGNORECASE)
-_RETRY_DELAY_RE = re.compile(r"retryDelay['\":\s]+(\d+(?:\.\d+)?)s", re.IGNORECASE)
-
 
 class EmbeddingService:
     """Quản lý việc chuyển đổi văn bản sang vector embedding qua Google Gemini API."""
+
+    RATE_LIMIT_WAIT_SECONDS = 61.0
 
     def __init__(
         self,
@@ -71,14 +69,6 @@ class EmbeddingService:
             or "resource exhausted" in lowered
         )
 
-    @staticmethod
-    def _extract_retry_wait_seconds(err_msg: str) -> float:
-        match = _RETRY_IN_RE.search(err_msg) or _RETRY_DELAY_RE.search(err_msg)
-        if match:
-            parsed = float(match.group(1))
-            return min(max(parsed + 2.0, 5.0), 65.0)
-        return 61.0
-
     def _reset_rate_window(self) -> None:
         self._window_start = None
         self._window_count = 0
@@ -104,7 +94,7 @@ class EmbeddingService:
 
         if exceeds_rpm or exceeds_tpm:
             # Cộng thêm 1s đệm (61s) để chắc chắn cửa sổ 1 phút của Gemini đã reset
-            wait_seconds = max(0.0, 61.0 - (now - self._window_start))
+            wait_seconds = max(0.0, self.RATE_LIMIT_WAIT_SECONDS - (now - self._window_start))
             if wait_seconds > 0:
                 logger.info(
                     "Sắp chạm ngưỡng phút (%d/%d chunks, ~%d/%d tokens). Chờ %.1fs trước khi gửi tiếp %d chunks...",
@@ -129,7 +119,7 @@ class EmbeddingService:
         task_type: str,
         error_prefix: str,
     ) -> list[float] | list[list[float]]:
-        """Gọi Gemini Embedding API (tự động chờ & retry nếu gặp 429 theo phút)."""
+        """Gọi Gemini Embedding API; nếu gặp lỗi 429 theo phút thì chờ 61s rồi thử lại."""
         self._ensure_configured()
         last_error: Exception | None = None
 
@@ -147,14 +137,13 @@ class EmbeddingService:
                 last_error = e
                 err_msg = str(e)
                 if attempt < self.max_retries and self._is_rate_limit_error(err_msg):
-                    wait_seconds = self._extract_retry_wait_seconds(err_msg)
                     logger.warning(
-                        "Gemini Embedding chạm giới hạn 429 (lần %d/%d). Chờ %.1fs rồi thử lại...",
+                        "Gemini Embedding chạm giới hạn 429 (lần %d/%d). Chờ %.0fs sang phút mới rồi thử lại...",
                         attempt + 1,
                         self.max_retries,
-                        wait_seconds,
+                        self.RATE_LIMIT_WAIT_SECONDS,
                     )
-                    time.sleep(wait_seconds)
+                    time.sleep(self.RATE_LIMIT_WAIT_SECONDS)
                     self._reset_rate_window()
                     continue
 
