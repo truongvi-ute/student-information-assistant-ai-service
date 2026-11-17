@@ -56,8 +56,8 @@ class EmbeddingService:
 
     @staticmethod
     def _estimate_tokens(texts: list[str]) -> int:
-        """Ước lượng thận trọng số token cho văn bản tiếng Việt (~2 ký tự/token)."""
-        return sum(max(1, (len(t) + 1) // 2) for t in texts)
+        """Ước lượng an toàn số token cho văn bản tiếng Việt/bảng biểu (~1 ký tự ≈ 1 token)."""
+        return sum(max(1, len(t)) for t in texts)
 
     @staticmethod
     def _is_rate_limit_error(err_msg: str) -> bool:
@@ -152,8 +152,8 @@ class EmbeddingService:
 
         raise EmbeddingError(f"{error_prefix}: {last_error}")
 
-    def embed_texts(self, texts: list[str], batch_size: int = 40) -> list[list[float]]:
-        """Tạo embedding cho danh sách đoạn văn bản theo từng mẻ (batch)."""
+    def embed_texts(self, texts: list[str], batch_size: int = 20) -> list[list[float]]:
+        """Tạo embedding cho danh sách đoạn văn bản theo từng mẻ (batch) vừa giới hạn TPM/RPM."""
         if not texts:
             return []
         if batch_size <= 0:
@@ -164,10 +164,25 @@ class EmbeddingService:
         )
         all_embeddings: list[list[float]] = []
 
-        for i in range(0, len(texts), effective_batch_size):
-            batch = texts[i : i + effective_batch_size]
-            estimated_tokens = self._estimate_tokens(batch)
-            self._wait_for_rate_window(len(batch), estimated_tokens=estimated_tokens)
+        idx = 0
+        total = len(texts)
+        while idx < total:
+            batch: list[str] = []
+            batch_tokens = 0
+            while idx < total and len(batch) < effective_batch_size:
+                next_text = texts[idx]
+                next_tokens = max(1, len(next_text))
+                if (
+                    batch
+                    and self.tpm_limit > 0
+                    and batch_tokens + next_tokens > self.tpm_limit
+                ):
+                    break
+                batch.append(next_text)
+                batch_tokens += next_tokens
+                idx += 1
+
+            self._wait_for_rate_window(len(batch), estimated_tokens=batch_tokens)
             batch_embeddings: list[list[float]] = self._call_embed(
                 content=batch,
                 task_type="retrieval_document",

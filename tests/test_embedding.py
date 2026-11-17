@@ -100,10 +100,11 @@ def test_embed_texts_no_wait_when_rpm_limit_disabled():
 
 
 def test_embed_texts_waits_when_exceeding_tpm_window():
-    """File dài vượt tpm_limit (30k TPM Free Tier) phải chủ động chờ sang phút mới."""
+    """File dài vượt tpm_limit phải tự chia batch vừa ngưỡng TPM và chủ động chờ sang phút mới."""
     mock_vector = [0.05] * settings.QDRANT_VECTOR_SIZE
     texts = ["A" * 800 for _ in range(50)]
-    service = EmbeddingService(rpm_limit=80, tpm_limit=15000)
+    # tpm_limit=20000 -> mỗi batch tối đa 25 chunks (25*800 = 20000), batch thứ 2 chờ 60s
+    service = EmbeddingService(rpm_limit=80, tpm_limit=20000)
 
     def _fake_embed(**kwargs):
         return {"embedding": [mock_vector] * len(kwargs["content"])}
@@ -115,7 +116,7 @@ def test_embed_texts_waits_when_exceeding_tpm_window():
         patch("app.services.embedding.time.monotonic", side_effect=clock),
         patch("app.services.embedding.time.sleep") as mock_sleep,
     ):
-        vectors = service.embed_texts(texts, batch_size=25)
+        vectors = service.embed_texts(texts, batch_size=40)
 
     assert len(vectors) == 50
     assert mock_embed.call_count == 2
