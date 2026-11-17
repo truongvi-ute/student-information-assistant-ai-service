@@ -152,7 +152,7 @@ class EmbeddingService:
 
         raise EmbeddingError(f"{error_prefix}: {last_error}")
 
-    def embed_texts(self, texts: list[str], batch_size: int = 20) -> list[list[float]]:
+    def embed_texts(self, texts: list[str], batch_size: int = 50) -> list[list[float]]:
         """Tạo embedding cho danh sách đoạn văn bản theo từng mẻ (batch) vừa giới hạn TPM/RPM."""
         if not texts:
             return []
