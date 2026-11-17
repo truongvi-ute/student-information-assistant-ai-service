@@ -1,9 +1,14 @@
+import re
 import time
 
 import google.generativeai as genai
+
 from app.core.config import settings
 from app.core.exceptions import EmbeddingError
 from app.core.logging import logger
+
+_RETRY_IN_RE = re.compile(r"retry in\s+(\d+(?:\.\d+)?)s", re.IGNORECASE)
+_RETRY_DELAY_RE = re.compile(r"retryDelay['\":\s]+(\d+(?:\.\d+)?)s", re.IGNORECASE)
 
 
 class EmbeddingService:
@@ -14,12 +19,20 @@ class EmbeddingService:
         api_key: str | None = None,
         model: str | None = None,
         rpm_limit: int | None = None,
+        tpm_limit: int | None = None,
+        max_retries: int = 3,
         timeout_seconds: float | None = None,
     ):
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model = model or settings.EMBEDDING_MODEL
         self.expected_dim = settings.QDRANT_VECTOR_SIZE
         self.rpm_limit = settings.EMBEDDING_RPM_LIMIT if rpm_limit is None else rpm_limit
+        self.tpm_limit = (
+            (0 if self.rpm_limit <= 0 else settings.EMBEDDING_TPM_LIMIT)
+            if tpm_limit is None
+            else tpm_limit
+        )
+        self.max_retries = max(0, max_retries)
         self.timeout_seconds = (
             settings.GEMINI_TIMEOUT_SECONDS
             if timeout_seconds is None
@@ -29,6 +42,7 @@ class EmbeddingService:
         self._configured = False
         self._window_start: float | None = None
         self._window_count = 0
+        self._window_tokens = 0
 
     def _ensure_configured(self) -> None:
         """Cấu hình Gemini API key theo cơ chế lazy loading với HTTP REST transport."""
@@ -42,32 +56,72 @@ class EmbeddingService:
                 f"Kích thước vector ({len(vector)}) không khớp với Qdrant ({self.expected_dim})"
             )
 
-    def _wait_for_rate_window(self, count: int) -> None:
-        """Chủ động chờ sang cửa sổ 60s mới nếu sắp vượt ngưỡng rpm_limit."""
-        if self.rpm_limit <= 0:
+    @staticmethod
+    def _estimate_tokens(texts: list[str]) -> int:
+        """Ước lượng thận trọng số token cho văn bản tiếng Việt (~2 ký tự/token)."""
+        return sum(max(1, (len(t) + 1) // 2) for t in texts)
+
+    @staticmethod
+    def _is_rate_limit_error(err_msg: str) -> bool:
+        lowered = err_msg.lower()
+        return (
+            "429" in err_msg
+            or "quota" in lowered
+            or "rate limit" in lowered
+            or "resource exhausted" in lowered
+        )
+
+    @staticmethod
+    def _extract_retry_wait_seconds(err_msg: str) -> float:
+        match = _RETRY_IN_RE.search(err_msg) or _RETRY_DELAY_RE.search(err_msg)
+        if match:
+            parsed = float(match.group(1))
+            return min(max(parsed + 2.0, 5.0), 65.0)
+        return 61.0
+
+    def _reset_rate_window(self) -> None:
+        self._window_start = None
+        self._window_count = 0
+        self._window_tokens = 0
+
+    def _wait_for_rate_window(self, count: int, estimated_tokens: int = 0) -> None:
+        """Chủ động chờ sang cửa sổ 60s mới nếu sắp vượt ngưỡng rpm_limit hoặc tpm_limit."""
+        if self.rpm_limit <= 0 and self.tpm_limit <= 0:
             return
 
         now = time.monotonic()
         if self._window_start is None or now - self._window_start >= 60.0:
             self._window_start = now
             self._window_count = 0
+            self._window_tokens = 0
 
-        if self._window_count + count > self.rpm_limit:
+        exceeds_rpm = self.rpm_limit > 0 and self._window_count + count > self.rpm_limit
+        exceeds_tpm = (
+            self.tpm_limit > 0
+            and self._window_tokens > 0
+            and self._window_tokens + estimated_tokens > self.tpm_limit
+        )
+
+        if exceeds_rpm or exceeds_tpm:
             # Cộng thêm 1s đệm (61s) để chắc chắn cửa sổ 1 phút của Gemini đã reset
             wait_seconds = max(0.0, 61.0 - (now - self._window_start))
             if wait_seconds > 0:
                 logger.info(
-                    "Đã gửi %d/%d chunks trong phút hiện tại. Chờ %.1fs trước khi gửi tiếp %d chunks...",
+                    "Sắp chạm ngưỡng phút (%d/%d chunks, ~%d/%d tokens). Chờ %.1fs trước khi gửi tiếp %d chunks...",
                     self._window_count,
                     self.rpm_limit,
+                    self._window_tokens,
+                    self.tpm_limit,
                     wait_seconds,
                     count,
                 )
                 time.sleep(wait_seconds)
             self._window_start = time.monotonic()
             self._window_count = 0
+            self._window_tokens = 0
 
         self._window_count += count
+        self._window_tokens += estimated_tokens
 
     def _call_embed(
         self,
@@ -75,20 +129,39 @@ class EmbeddingService:
         task_type: str,
         error_prefix: str,
     ) -> list[float] | list[list[float]]:
-        """Gọi Gemini Embedding API và chuẩn hóa lỗi trả về."""
+        """Gọi Gemini Embedding API (tự động chờ & retry nếu gặp 429 theo phút)."""
         self._ensure_configured()
-        try:
-            result = genai.embed_content(
-                model=self.model,
-                content=content,
-                task_type=task_type,
-                output_dimensionality=self.expected_dim,
-                request_options={"timeout": self.timeout_seconds},
-            )
-            return result["embedding"]
-        except Exception as e:
-            logger.error("Lỗi khi gọi Gemini Embedding API: %s", str(e))
-            raise EmbeddingError(f"{error_prefix}: {e}") from e
+        last_error: Exception | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                result = genai.embed_content(
+                    model=self.model,
+                    content=content,
+                    task_type=task_type,
+                    output_dimensionality=self.expected_dim,
+                    request_options={"timeout": self.timeout_seconds},
+                )
+                return result["embedding"]
+            except Exception as e:
+                last_error = e
+                err_msg = str(e)
+                if attempt < self.max_retries and self._is_rate_limit_error(err_msg):
+                    wait_seconds = self._extract_retry_wait_seconds(err_msg)
+                    logger.warning(
+                        "Gemini Embedding chạm giới hạn 429 (lần %d/%d). Chờ %.1fs rồi thử lại...",
+                        attempt + 1,
+                        self.max_retries,
+                        wait_seconds,
+                    )
+                    time.sleep(wait_seconds)
+                    self._reset_rate_window()
+                    continue
+
+                logger.error("Lỗi khi gọi Gemini Embedding API: %s", err_msg)
+                raise EmbeddingError(f"{error_prefix}: {e}") from e
+
+        raise EmbeddingError(f"{error_prefix}: {last_error}")
 
     def embed_texts(self, texts: list[str], batch_size: int = 40) -> list[list[float]]:
         """Tạo embedding cho danh sách đoạn văn bản theo từng mẻ (batch)."""
@@ -104,7 +177,8 @@ class EmbeddingService:
 
         for i in range(0, len(texts), effective_batch_size):
             batch = texts[i : i + effective_batch_size]
-            self._wait_for_rate_window(len(batch))
+            estimated_tokens = self._estimate_tokens(batch)
+            self._wait_for_rate_window(len(batch), estimated_tokens=estimated_tokens)
             batch_embeddings: list[list[float]] = self._call_embed(
                 content=batch,
                 task_type="retrieval_document",

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
     EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     EMBEDDING_RPM_LIMIT: int = 80  # Đặt 0 nếu dùng gói trả phí để tắt giới hạn chờ mỗi phút
+    EMBEDDING_TPM_LIMIT: int = 24000  # Giới hạn token/phút (Free Tier Gemini là 30,000 TPM)
     CHAT_MODEL: str = "gemini-2.5-flash"
     GEMINI_TIMEOUT_SECONDS: float = 30.0
 

@@ -97,3 +97,50 @@ def test_embed_texts_no_wait_when_rpm_limit_disabled():
     assert len(vectors) == 158
     assert mock_embed.call_count == 3
     mock_sleep.assert_not_called()
+
+
+def test_embed_texts_waits_when_exceeding_tpm_window():
+    """File dài vượt tpm_limit (30k TPM Free Tier) phải chủ động chờ sang phút mới."""
+    mock_vector = [0.05] * settings.QDRANT_VECTOR_SIZE
+    # 50 chunks x 800 ký tự (~400 tokens/chunk => ~20k tokens cho 25 chunks)
+    texts = ["A" * 800 for _ in range(50)]
+    service = EmbeddingService(rpm_limit=80, tpm_limit=15000)
+
+    def _fake_embed(**kwargs):
+        return {"embedding": [mock_vector] * len(kwargs["content"])}
+
+    clock = iter([100.0, 101.0, 162.0])
+
+    with (
+        patch("app.services.embedding.genai.embed_content", side_effect=_fake_embed) as mock_embed,
+        patch("app.services.embedding.time.monotonic", side_effect=clock),
+        patch("app.services.embedding.time.sleep") as mock_sleep,
+    ):
+        vectors = service.embed_texts(texts, batch_size=25)
+
+    assert len(vectors) == 50
+    assert mock_embed.call_count == 2
+    mock_sleep.assert_called_once_with(60.0)
+
+
+def test_call_embed_retries_on_429_using_retry_delay():
+    """Khi gặp lỗi 429 từ Gemini, phải đọc retryDelay và thử lại thành công."""
+    mock_vector = [0.06] * settings.QDRANT_VECTOR_SIZE
+    service = EmbeddingService(rpm_limit=80, max_retries=2)
+
+    rate_limit_error = RuntimeError(
+        "429 POST ... Embed content tokens per minute limit exceeded. Please retry in 19.75s."
+    )
+
+    with (
+        patch(
+            "app.services.embedding.genai.embed_content",
+            side_effect=[rate_limit_error, {"embedding": [mock_vector]}],
+        ) as mock_embed,
+        patch("app.services.embedding.time.sleep") as mock_sleep,
+    ):
+        vectors = service.embed_texts(["Nội dung test 429"])
+
+    assert len(vectors) == 1
+    assert mock_embed.call_count == 2
+    mock_sleep.assert_called_once_with(21.75)
