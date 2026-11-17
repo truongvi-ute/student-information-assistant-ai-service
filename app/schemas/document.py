@@ -21,6 +21,14 @@ class Chunk(BaseModel):
         ...,
         description="Số thứ tự của chunk trong tài liệu gốc (bắt đầu từ 0)",
     )
+    char_start: int | None = Field(
+        default=None,
+        description="Vị trí ký tự bắt đầu của chunk trên văn bản Markdown chuẩn hóa",
+    )
+    char_end: int | None = Field(
+        default=None,
+        description="Vị trí ký tự kết thúc của chunk trên văn bản Markdown chuẩn hóa",
+    )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Metadata kế thừa từ tài liệu gốc và thông tin bổ sung của chunk",
