@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     
     # text-embedding-004 của Gemini có 768 chiều (khác với OpenAI 1536)
     QDRANT_VECTOR_SIZE: int = 768
+    RETRIEVAL_SCORE_THRESHOLD: float = 0.45
 
     # Chunker Settings
     CHUNK_SIZE: int = 800

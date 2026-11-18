@@ -60,12 +60,17 @@ class VectorRetriever:
                 )
 
             # 4. Truy vấn Qdrant bằng phương thức query_points
+            effective_threshold = (
+                settings.RETRIEVAL_SCORE_THRESHOLD
+                if score_threshold is None
+                else score_threshold
+            )
             response = self.client.query_points(
                 collection_name=self.collection_name,
                 query=query_vector,
                 query_filter=qdrant_filter,
                 limit=top_k,
-                score_threshold=score_threshold,
+                score_threshold=effective_threshold,
                 with_payload=True,
             )
 
@@ -102,6 +107,55 @@ class VectorRetriever:
         except Exception as e:
             logger.error("Lỗi khi truy xuất Qdrant: %s", str(e))
             raise RetrievalError(f"Không thể truy xuất dữ liệu từ Qdrant: {e}") from e
+
+    def retrieve_multi_queries(
+        self,
+        queries: list[str],
+        top_k_per_query: int = 4,
+        max_total_chunks: int = 8,
+        filename_filter: str | None = None,
+        score_threshold: float | None = None,
+    ) -> list[RetrievedChunk]:
+        """Truy xuất Qdrant cho danh sách các câu truy vấn con, gộp cân bằng theo vòng (round-robin) và khử trùng lặp."""
+        cleaned_queries = [q.strip() for q in queries if q and q.strip()]
+        if not cleaned_queries:
+            return []
+
+        if len(cleaned_queries) == 1:
+            return self.retrieve(
+                query=cleaned_queries[0],
+                top_k=top_k_per_query,
+                filename_filter=filename_filter,
+                score_threshold=score_threshold,
+            )
+
+        per_query_results: list[list[RetrievedChunk]] = []
+        for sub_q in cleaned_queries:
+            sub_chunks = self.retrieve(
+                query=sub_q,
+                top_k=top_k_per_query,
+                filename_filter=filename_filter,
+                score_threshold=score_threshold,
+            )
+            per_query_results.append(sub_chunks)
+
+        # Gộp theo kiểu xen kẽ (round-robin) để đảm bảo mọi nhánh câu hỏi đều có đại diện
+        merged_by_id: dict[str, RetrievedChunk] = {}
+        max_len = max((len(lst) for lst in per_query_results), default=0)
+
+        for idx in range(max_len):
+            for chunk_list in per_query_results:
+                if idx >= len(chunk_list):
+                    continue
+                candidate = chunk_list[idx]
+                existing = merged_by_id.get(candidate.id)
+                if existing is None:
+                    if len(merged_by_id) < max_total_chunks:
+                        merged_by_id[candidate.id] = candidate
+                elif candidate.score > existing.score:
+                    merged_by_id[candidate.id] = candidate
+
+        return list(merged_by_id.values())
 
 
 # Instance mặc định dùng cho toàn ứng dụng
