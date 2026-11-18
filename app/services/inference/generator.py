@@ -1,20 +1,41 @@
+import json
+import re
 import time
+from typing import Any
 
 import google.generativeai as genai
 from app.core.config import settings
 from app.core.exceptions import LLMGenerationError, LLMTimeoutError
 from app.core.logging import logger
-from app.schemas.response import ChatResponse, RetrievedChunk, SourceCitation
+from app.schemas.response import (
+    ChatResponse,
+    GroundedLLMOutput,
+    RetrievedChunk,
+    SourceCitation,
+)
 from app.services.inference.prompts import build_rag_prompt
 from app.services.inference.retriever import VectorRetriever, vector_retriever
 
 NO_CONTEXT_FALLBACK_ANSWER = (
-    "Hiện tại tôi không tìm thấy thông tin liên quan đến câu hỏi của bạn trong cơ sở dữ liệu tài liệu học vụ."
+    "Hiện tại mình chưa tìm thấy thông tin phù hợp với câu hỏi của bạn trong kho tài liệu học vụ. "
+    "Bạn có thể thử diễn đạt rõ hơn (kèm tên ngành học hoặc tên quy chế), hoặc hỏi mình về các nội dung "
+    "như: **chương trình đào tạo, danh mục môn học, số tín chỉ, chuẩn đầu ra và điều kiện tốt nghiệp** nhé!"
+)
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+_SOURCE_REF_RE = re.compile(r"\[Nguồn\s*(\d+)(?:\s*:[^\]]*)?\]", re.IGNORECASE)
+_REFUSAL_MARKERS = (
+    "không tìm thấy thông tin",
+    "chưa tìm thấy thông tin",
+    "không có thông tin",
+    "chưa đề cập",
+    "không đề cập",
+    "không thể trả lời",
 )
 
 
 class RAGGenerator:
-    """Bộ điều phối RAG cơ sở (Naive RAG): Truy xuất ngữ cảnh và gọi LLM sinh câu trả lời."""
+    """Bộ điều phối RAG: Truy xuất ngữ cảnh, gọi LLM sinh câu trả lời và chọn lọc trích dẫn nguồn."""
 
     def __init__(
         self,
@@ -42,10 +63,126 @@ class RAGGenerator:
         return self._model
 
     @staticmethod
-    def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceCitation]:
+    def _extract_json_dict(raw_text: str) -> dict[str, Any] | None:
+        """Thử phân tích chuỗi JSON trực tiếp, trong khối ```json``` hoặc đoạn {...}."""
+        candidates = [raw_text]
+        fence_match = _JSON_FENCE_RE.search(raw_text)
+        if fence_match:
+            candidates.append(fence_match.group(1))
+
+        first_brace = raw_text.find("{")
+        last_brace = raw_text.rfind("}")
+        if 0 <= first_brace < last_brace:
+            candidates.append(raw_text[first_brace : last_brace + 1])
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @classmethod
+    def _parse_grounded_output(
+        cls,
+        raw_text: str,
+        total_chunks: int,
+    ) -> GroundedLLMOutput:
+        """Bóc tách JSON đầu ra từ LLM và chuẩn hóa chỉ số nguồn; fallback an toàn nếu nhận văn bản thường."""
+        cleaned = (raw_text or "").strip()
+        data = cls._extract_json_dict(cleaned)
+
+        if data is not None and isinstance(data.get("answer"), str) and data["answer"].strip():
+            answer = data["answer"].strip()
+            raw_is_answered = data.get("is_answered", True)
+            if isinstance(raw_is_answered, bool):
+                is_answered = raw_is_answered
+            elif isinstance(raw_is_answered, str):
+                is_answered = raw_is_answered.strip().lower() not in ("false", "0", "no")
+            else:
+                is_answered = bool(raw_is_answered)
+
+            if not is_answered:
+                return GroundedLLMOutput(
+                    answer=answer,
+                    cited_source_indices=[],
+                    is_answered=False,
+                )
+
+            raw_indices = data.get("cited_source_indices", [])
+            valid_indices: list[int] = []
+            seen: set[int] = set()
+            if isinstance(raw_indices, list):
+                for item in raw_indices:
+                    if isinstance(item, bool):
+                        continue
+                    if isinstance(item, int):
+                        idx = item
+                    elif isinstance(item, str) and item.strip().isdigit():
+                        idx = int(item.strip())
+                    else:
+                        continue
+                    if 1 <= idx <= total_chunks and idx not in seen:
+                        seen.add(idx)
+                        valid_indices.append(idx)
+
+            return GroundedLLMOutput(
+                answer=answer,
+                cited_source_indices=valid_indices,
+                is_answered=True,
+            )
+
+        # Fallback an toàn khi LLM trả về văn bản thuần (không phải JSON)
+        explicit_indices: list[int] = []
+        seen_refs: set[int] = set()
+        for match in _SOURCE_REF_RE.finditer(cleaned):
+            idx = int(match.group(1))
+            if 1 <= idx <= total_chunks and idx not in seen_refs:
+                seen_refs.add(idx)
+                explicit_indices.append(idx)
+
+        if explicit_indices:
+            return GroundedLLMOutput(
+                answer=cleaned,
+                cited_source_indices=explicit_indices,
+                is_answered=True,
+            )
+
+        lowered = cleaned.lower()
+        if any(marker in lowered for marker in _REFUSAL_MARKERS):
+            return GroundedLLMOutput(
+                answer=cleaned,
+                cited_source_indices=[],
+                is_answered=False,
+            )
+
+        fallback_indices = list(range(1, total_chunks + 1)) if total_chunks > 0 else []
+        return GroundedLLMOutput(
+            answer=cleaned,
+            cited_source_indices=fallback_indices,
+            is_answered=True,
+        )
+
+    @staticmethod
+    def _build_sources(
+        chunks: list[RetrievedChunk],
+        cited_indices: list[int] | None = None,
+    ) -> list[SourceCitation]:
         """Chuyển danh sách chunk đã dùng thành danh sách trích dẫn nguồn cho response."""
+        if cited_indices is None:
+            selected_chunks = chunks
+        else:
+            selected_chunks = []
+            seen_indices: set[int] = set()
+            for idx in cited_indices:
+                if 1 <= idx <= len(chunks) and idx not in seen_indices:
+                    seen_indices.add(idx)
+                    selected_chunks.append(chunks[idx - 1])
+
         sources: list[SourceCitation] = []
-        for chunk in chunks:
+        for chunk in selected_chunks:
             snippet = chunk.content[:200] + ("..." if len(chunk.content) > 200 else "")
             sources.append(
                 SourceCitation(
@@ -67,7 +204,10 @@ class RAGGenerator:
         try:
             response = self.model.generate_content(
                 prompt,
-                generation_config={"temperature": 0.2},
+                generation_config={
+                    "temperature": 0.2,
+                    "response_mime_type": "application/json",
+                },
                 request_options={"timeout": self.timeout_seconds},
             )
             answer_text = (response.text or "").strip()
@@ -98,7 +238,7 @@ class RAGGenerator:
         top_k: int = 5,
         filename_filter: str | None = None,
     ) -> ChatResponse:
-        """Thực hiện toàn bộ luồng RAG: Retrieve -> Prompt -> Generate -> Return."""
+        """Thực hiện toàn bộ luồng RAG: Retrieve -> Prompt -> Generate -> Selective Citation."""
         t0 = time.perf_counter()
 
         # 1. Truy xuất các đoạn văn bản liên quan
@@ -125,21 +265,24 @@ class RAGGenerator:
         # 3. Dựng prompt kèm ngữ cảnh và gọi LLM
         t_gen = time.perf_counter()
         prompt = build_rag_prompt(question=question, chunks=chunks)
-        answer = self.generate_answer(prompt)
+        raw_output = self.generate_answer(prompt)
+        grounded = self._parse_grounded_output(raw_output, total_chunks=len(chunks))
         generate_ms = (time.perf_counter() - t_gen) * 1000
         total_ms = (time.perf_counter() - t0) * 1000
 
         logger.info(
-            "RAG timing | retrieve=%.1fms | generate=%.1fms | total=%.1fms",
+            "RAG timing | retrieve=%.1fms | generate=%.1fms | total=%.1fms | cited=%d/%d",
             retrieve_ms,
             generate_ms,
             total_ms,
+            len(grounded.cited_source_indices),
+            len(chunks),
         )
-        sources = self._build_sources(chunks)
+        sources = self._build_sources(chunks, cited_indices=grounded.cited_source_indices)
 
         return ChatResponse(
             question=question,
-            answer=answer,
+            answer=grounded.answer,
             sources=sources,
         )
 
