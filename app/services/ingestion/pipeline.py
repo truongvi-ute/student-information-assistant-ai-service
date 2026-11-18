@@ -1,3 +1,4 @@
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -14,11 +15,16 @@ from app.core.config import settings
 from app.core.exceptions import IngestionError
 from app.core.logging import logger
 from app.db.qdrant import get_qdrant_client, init_collection
-from app.schemas.document import ExtractedDocument, IngestionResult
+from app.schemas.document import Chunk, ExtractedDocument, IngestionResult
 from app.services.embedding import EmbeddingService, embedding_service
 from app.services.ingestion.chunker import TextChunker, text_chunker
 from app.services.ingestion.loader import DocumentLoader, document_loader
 from app.services.storage import StorageAdapter, storage_adapter
+
+_UUID_PREFIX_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_"
+)
+_MAX_CONTEXT_PART_LEN = 100
 
 
 class IngestionPipeline:
@@ -47,6 +53,42 @@ class IngestionPipeline:
     def build_extracted_markdown_key(document_id: str) -> str:
         """Quy ước object key của bản Markdown chuẩn hóa trên RustFS/S3."""
         return f"extracted/{document_id}.md"
+
+    @staticmethod
+    def _normalize_context_part(
+        value: Any, max_len: int = _MAX_CONTEXT_PART_LEN
+    ) -> str:
+        """Chuẩn hóa khoảng trắng và giới hạn độ dài tối đa mỗi phần ngữ cảnh."""
+        if not value:
+            return ""
+        cleaned = " ".join(str(value).split())
+        if len(cleaned) <= max_len:
+            return cleaned
+        return cleaned[:max_len].rstrip()
+
+    @classmethod
+    def _build_embedding_text(cls, chunk: Chunk) -> str:
+        """Ghép title (fallback filename) và description vào đầu chunk khi tạo vector."""
+        meta = chunk.metadata or {}
+        raw_title = str(meta.get("title") or meta.get("document_title") or "").strip()
+        raw_filename = str(meta.get("filename") or "").strip()
+        if not raw_title and raw_filename:
+            raw_title = _UUID_PREFIX_RE.sub("", raw_filename)
+
+        doc_label = cls._normalize_context_part(raw_title)
+        description = cls._normalize_context_part(meta.get("description"))
+
+        header_parts: list[str] = []
+        if doc_label:
+            header_parts.append(f"Tài liệu: {doc_label}")
+        if description:
+            header_parts.append(f"Mô tả: {description}")
+
+        if not header_parts:
+            return chunk.content
+
+        context_prefix = " | ".join(header_parts)
+        return f"[{context_prefix}]\n{chunk.content}"
 
     def _delete_existing_document_points(self, document_id: str) -> None:
         """Xóa toàn bộ points cũ của document_id trong Qdrant trước khi upsert bản mới."""
@@ -95,7 +137,7 @@ class IngestionPipeline:
                 doc_contents[str(raw_doc_id)] = doc.content
 
         logger.info("Đang tạo embedding cho %d chunks...", len(chunks))
-        texts = [c.content for c in chunks]
+        texts = [self._build_embedding_text(c) for c in chunks]
         embeddings = self.embedding_service.embed_texts(texts)
 
         points: list[PointStruct] = []
