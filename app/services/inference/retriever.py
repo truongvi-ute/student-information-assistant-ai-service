@@ -77,14 +77,21 @@ class VectorRetriever:
                 if not content:
                     continue
 
+                raw_doc_id = payload.get("document_id")
+                raw_char_start = payload.get("char_start")
+                raw_char_end = payload.get("char_end")
+
                 chunks.append(
                     RetrievedChunk(
                         id=str(point.id),
                         content=content,
                         score=float(point.score),
                         chunk_index=int(payload.get("chunk_index", 0)),
+                        document_id=str(raw_doc_id) if raw_doc_id is not None else None,
                         filename=payload.get("filename"),
                         page_number=payload.get("page_number"),
+                        char_start=int(raw_char_start) if raw_char_start is not None else None,
+                        char_end=int(raw_char_end) if raw_char_end is not None else None,
                         metadata=payload,
                     )
                 )

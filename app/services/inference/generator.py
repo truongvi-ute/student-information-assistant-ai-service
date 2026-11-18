@@ -49,11 +49,15 @@ class RAGGenerator:
             snippet = chunk.content[:200] + ("..." if len(chunk.content) > 200 else "")
             sources.append(
                 SourceCitation(
+                    document_id=chunk.document_id,
                     filename=chunk.filename or "unknown",
                     page_number=chunk.page_number,
                     chunk_index=chunk.chunk_index,
+                    char_start=chunk.char_start,
+                    char_end=chunk.char_end,
                     score=round(chunk.score, 4),
                     snippet=snippet,
+                    content=chunk.content,
                 )
             )
         return sources

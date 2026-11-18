@@ -1,5 +1,5 @@
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ExtractedDocument(BaseModel):
@@ -20,6 +20,14 @@ class Chunk(BaseModel):
     chunk_index: int = Field(
         ...,
         description="Số thứ tự của chunk trong tài liệu gốc (bắt đầu từ 0)",
+    )
+    char_start: int | None = Field(
+        default=None,
+        description="Vị trí ký tự bắt đầu của chunk trên văn bản Markdown chuẩn hóa",
+    )
+    char_end: int | None = Field(
+        default=None,
+        description="Vị trí ký tự kết thúc của chunk trên văn bản Markdown chuẩn hóa",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -47,3 +55,35 @@ class CollectionStatsResponse(BaseModel):
     points_count: int = Field(..., description="Tổng số vector points (chunks) hiện có")
     vector_size: int = Field(..., description="Số chiều của mỗi vector (768)")
     status: str = Field(..., description="Trạng thái hoạt động của collection")
+
+
+class IngestFromStorageRequest(BaseModel):
+    """Yêu cầu nạp tài liệu từ RustFS/S3 vào Qdrant thông qua StorageAdapter."""
+
+    document_id: str = Field(..., min_length=1, description="UUID tài liệu ở Backend")
+    file_key: str = Field(..., min_length=1, description="Object key của file gốc trên RustFS/S3")
+    filename: str = Field(..., min_length=1, description="Tên file gốc kèm phần mở rộng")
+    callback_url: str | None = Field(
+        default=None,
+        description="URL callback nội bộ của Backend để cập nhật trạng thái READY/FAILED",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata nghiệp vụ bổ sung lưu kèm vào Qdrant payload",
+    )
+
+    @field_validator("document_id", "file_key", "filename")
+    @classmethod
+    def validate_not_blank(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Trường bắt buộc không được chỉ chứa khoảng trắng")
+        return cleaned
+
+
+class IngestFromStorageResponse(BaseModel):
+    """Phản hồi chấp nhận xử lý ngầm khi Backend kích hoạt nạp từ Storage."""
+
+    status: str = Field(default="processing", description="Trạng thái tiếp nhận")
+    document_id: str = Field(..., description="UUID tài liệu đang xử lý")
+    message: str = Field(..., description="Thông báo trạng thái")

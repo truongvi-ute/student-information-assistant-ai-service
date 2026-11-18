@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     # Gemini API
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
     EMBEDDING_MODEL: str = "models/gemini-embedding-001"
-    EMBEDDING_RPM_LIMIT: int = 80  # Đặt 0 nếu dùng gói trả phí để tắt giới hạn chờ mỗi phút
+    EMBEDDING_RPM_LIMIT: int = 50  # Đặt 0 nếu dùng gói trả phí để tắt giới hạn chờ mỗi phút
+    EMBEDDING_TPM_LIMIT: int = 29000  # Giới hạn token/phút (Free Tier Gemini là 30,000 TPM)
     CHAT_MODEL: str = "gemini-2.5-flash"
     GEMINI_TIMEOUT_SECONDS: float = 30.0
 
@@ -36,6 +37,17 @@ class Settings(BaseSettings):
     # Chunker Settings
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
+
+    # Storage Settings (RustFS Dev / S3 Prod)
+    STORAGE_ENDPOINT_URL: str = "http://localhost:9000"
+    STORAGE_ACCESS_KEY: str = "sia-minio"
+    STORAGE_SECRET_KEY: str = "12345678"
+    STORAGE_BUCKET_NAME: str = "sia-documents"
+    STORAGE_REGION: str = "us-east-1"
+
+    # Internal Backend Callback
+    BACKEND_INTERNAL_URL: str = "http://localhost:8080"
+    INTERNAL_API_KEY: str = "sia-internal-secret-change-me"
 
 
 settings = Settings()

@@ -72,3 +72,74 @@ def test_chunker_repeats_header_when_table_exceeds_chunk_size():
     assert len(chunks) >= 2
     for c in chunks:
         assert "| Môn học | Số tín chỉ |" in c.content
+
+
+def test_chunker_tracks_exact_char_offsets():
+    """Kiểm tra char_start và char_end ánh xạ đúng vị trí trên văn bản Markdown chuẩn hóa."""
+    chunker = TextChunker(chunk_size=120, chunk_overlap=20)
+    text = (
+        "# Chương 1: Quy định chung\n\n"
+        "Sinh viên bậc đại học chính quy đăng ký tối thiểu 14 tín chỉ trong mỗi học kỳ chính.\n\n"
+        "Sinh viên diện cảnh báo học vụ chỉ được đăng ký tối đa 14 tín chỉ."
+    )
+    chunks = chunker.split_text(text)
+
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert chunk.char_start is not None
+        assert chunk.char_end is not None
+        assert 0 <= chunk.char_start < chunk.char_end <= len(text)
+        sliced = text[chunk.char_start : chunk.char_end]
+        assert sliced.strip() != ""
+        assert sliced in text
+
+
+def test_chunker_oversized_prose_overlap_offsets():
+    """Kiểm tra đoạn văn dài bị tách có overlap vẫn giữ char_start/char_end hợp lệ."""
+    chunker = TextChunker(chunk_size=60, chunk_overlap=15)
+    text = (
+        "Quy chế đào tạo theo hệ thống tín chỉ áp dụng cho toàn bộ sinh viên chính quy. "
+        "Thời gian học tập tối đa được quy định chi tiết theo từng ngành đào tạo."
+    )
+    chunks = chunker.split_text(text)
+
+    assert len(chunks) >= 2
+    assert chunks[0].char_start == 0
+    for chunk in chunks:
+        assert chunk.char_start is not None and chunk.char_end is not None
+        assert 0 <= chunk.char_start < chunk.char_end <= len(text)
+    # Chunk sau gối đầu hoặc nối tiếp chunk trước
+    assert chunks[1].char_start <= chunks[0].char_end
+
+
+def test_chunker_oversized_table_offsets():
+    """Kiểm tra bảng bị tách vẫn có char_start/char_end nằm đúng trong bảng gốc."""
+    chunker = TextChunker(chunk_size=90, chunk_overlap=10)
+    text = (
+        "| Môn học | Số tín chỉ |\n"
+        "| --- | --- |\n"
+        "| Giải tích 1 | 3 |\n"
+        "| Đại số tuyến tính | 3 |\n"
+        "| Cấu trúc dữ liệu | 4 |"
+    )
+    chunks = chunker.split_text(text)
+
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert chunk.char_start is not None and chunk.char_end is not None
+        assert 0 <= chunk.char_start < chunk.char_end <= len(text)
+    assert "| Giải tích 1 | 3 |" in text[chunks[0].char_start : chunks[0].char_end]
+    assert "| Cấu trúc dữ liệu | 4 |" in text[chunks[-1].char_start : chunks[-1].char_end]
+
+
+def test_chunker_hard_splits_unbroken_token_and_keeps_offsets():
+    """Chuỗi dài không có dấu cách vẫn phải bị cắt nhỏ theo chunk_size và giữ offset hợp lệ."""
+    chunker = TextChunker(chunk_size=100, chunk_overlap=20)
+    text = "X" * 250
+    chunks = chunker.split_text(text)
+
+    assert len(chunks) >= 3
+    for chunk in chunks:
+        assert len(chunk.content) <= 100
+        assert chunk.char_start is not None and chunk.char_end is not None
+        assert 0 <= chunk.char_start < chunk.char_end <= len(text)

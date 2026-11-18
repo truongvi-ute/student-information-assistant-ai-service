@@ -11,15 +11,23 @@ from app.services.inference.generator import NO_CONTEXT_FALLBACK_ANSWER, RAGGene
 
 def test_generator_with_context_builds_prompt_and_sources():
     """Kiểm tra generator ghép ngữ cảnh vào prompt và trích xuất đúng danh sách nguồn."""
+    long_content = (
+        "Sinh viên phải đăng ký tối thiểu 14 tín chỉ mỗi học kỳ. "
+        + "Quy định này áp dụng cho tất cả sinh viên hệ chính quy đang theo học tại trường, "
+        * 3
+    ).strip()
     mock_retriever = MagicMock()
     mock_retriever.retrieve.return_value = [
         RetrievedChunk(
             id="id-1",
-            content="Sinh viên phải đăng ký tối thiểu 14 tín chỉ mỗi học kỳ.",
+            content=long_content,
             score=0.92,
             chunk_index=1,
+            document_id="doc-uuid-1",
             filename="quy_che_2024.pdf",
             page_number=5,
+            char_start=300,
+            char_end=300 + len(long_content),
         )
     ]
 
@@ -34,8 +42,15 @@ def test_generator_with_context_builds_prompt_and_sources():
 
     assert "14 tín chỉ" in response.answer
     assert len(response.sources) == 1
-    assert response.sources[0].filename == "quy_che_2024.pdf"
-    assert response.sources[0].page_number == 5
+    source = response.sources[0]
+    assert source.document_id == "doc-uuid-1"
+    assert source.filename == "quy_che_2024.pdf"
+    assert source.page_number == 5
+    assert source.char_start == 300
+    assert source.char_end == 300 + len(long_content)
+    assert source.content == long_content
+    assert source.snippet.endswith("...")
+    assert len(source.snippet) == 203
 
     # Đảm bảo prompt gửi vào LLM chứa cả nội dung chunk và câu hỏi
     sent_prompt = mock_model.generate_content.call_args.args[0]
