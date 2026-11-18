@@ -121,7 +121,7 @@ def test_generator_passes_timeout_and_maps_read_timeout():
     assert call_kwargs["request_options"] == {"timeout": 12.5}
 
 
-def test_generator_filters_sources_by_cited_indices():
+def test_generator_filters_sources_by_used_indices():
     """Retriever trả về 5 chunks, LLM chỉ trích dẫn [2] -> response.sources chỉ giữ đúng chunk 2."""
     mock_retriever = MagicMock()
     mock_retriever.retrieve.return_value = _make_chunks(5)
@@ -132,8 +132,8 @@ def test_generator_filters_sources_by_cited_indices():
     mock_llm_resp.text = json.dumps(
         {
             "answer": "Theo tài liệu số 2 (trang 2), quy định đào tạo phần 2 được áp dụng.",
-            "cited_source_indices": [2],
-            "is_answered": True,
+            "used_source_indices": [2],
+            "has_relevant_context": True,
         },
         ensure_ascii=False,
     )
@@ -149,8 +149,8 @@ def test_generator_filters_sources_by_cited_indices():
     assert response.sources[0].page_number == 2
 
 
-def test_generator_returns_empty_sources_when_unanswered():
-    """Khi ngữ cảnh nhiễu (is_answered=false), ép danh sách sources về rỗng dù LLM có lỡ liệt kê index."""
+def test_generator_returns_empty_sources_when_no_relevant_context():
+    """Khi ngữ cảnh nhiễu (has_relevant_context=false), ép danh sách sources về rỗng dù LLM có lỡ liệt kê index."""
     mock_retriever = MagicMock()
     mock_retriever.retrieve.return_value = _make_chunks(5)
 
@@ -163,8 +163,8 @@ def test_generator_returns_empty_sources_when_unanswered():
                 "Hiện tại tài liệu chưa có thông tin về học phí ký túc xá. "
                 "Bạn có thể hỏi về chương trình đào tạo hoặc liên hệ Phòng Đào tạo nhé."
             ),
-            "cited_source_indices": [1],
-            "is_answered": False,
+            "used_source_indices": [1],
+            "has_relevant_context": False,
         },
         ensure_ascii=False,
     )
@@ -188,7 +188,7 @@ def test_generator_parses_fenced_json_and_deduplicates_invalid_indices():
     mock_llm_resp.text = (
         "```json\n"
         '{"answer": "Thông tin tổng hợp từ nguồn 3 và nguồn 1.", '
-        '"cited_source_indices": [3, 3, 99, 0, -1, 1], "is_answered": true}\n'
+        '"used_source_indices": [3, 3, 99, 0, -1, 1], "has_relevant_context": true}\n'
         "```"
     )
     mock_model.generate_content.return_value = mock_llm_resp

@@ -9,16 +9,16 @@ QUY TẮC BẮT BUỘC:
 3. Nếu [NGỮ CẢNH TÀI LIỆU] KHÔNG chứa thông tin để trả lời câu hỏi:
    - Trả lời lịch sự, thân thiện rằng hiện tại dữ liệu văn bản trên hệ thống chưa đề cập chi tiết nội dung này.
    - Nếu trong ngữ cảnh có thông tin liên quan gần đó thì giới thiệu ngắn gọn (chỉ khi thực sự có trong ngữ cảnh), đồng thời gợi ý sinh viên các chủ đề SIA đang hỗ trợ tốt (Chương trình đào tạo, danh mục môn học, số tín chỉ, chuẩn đầu ra, quy chế học vụ, điều kiện tốt nghiệp) hoặc khuyến nghị liên hệ Phòng Đào tạo / Cố vấn học tập để được hỗ trợ chính xác nhất.
-   - Bắt buộc đặt "is_answered": false và "cited_source_indices": [].
+   - Bắt buộc đặt "has_relevant_context": false và "used_source_indices": [].
 4. Chọn lọc nguồn trích dẫn (Selective Citation):
-   - Trong "cited_source_indices", CHỈ liệt kê số thứ tự i (bắt đầu từ 1) của những [Nguồn i] thực sự cung cấp thông tin trực tiếp cho câu trả lời.
+   - Trong "used_source_indices", CHỈ liệt kê số thứ tự i (bắt đầu từ 1) của những [Nguồn i] thực sự cung cấp thông tin trực tiếp cho câu trả lời.
    - KHÔNG liệt kê các nguồn không dùng đến hoặc không liên quan.
 5. ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    - Trả về DUY NHẤT một đối tượng JSON hợp lệ (không kèm văn bản thừa bên ngoài) theo đúng cấu trúc:
      {
        "answer": "Nội dung câu trả lời bằng tiếng Việt (hỗ trợ Markdown)...",
-       "cited_source_indices": [1, 2],
-       "is_answered": true
+       "used_source_indices": [1, 2],
+       "has_relevant_context": true
      }"""
 
 

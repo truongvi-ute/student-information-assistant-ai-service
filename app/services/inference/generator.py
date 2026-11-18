@@ -9,9 +9,9 @@ from app.core.exceptions import LLMGenerationError, LLMTimeoutError
 from app.core.logging import logger
 from app.schemas.response import (
     ChatResponse,
-    GroundedLLMOutput,
     RetrievedChunk,
     SourceCitation,
+    StructuredRAGOutput,
 )
 from app.services.inference.prompts import build_rag_prompt
 from app.services.inference.retriever import VectorRetriever, vector_retriever
@@ -23,7 +23,7 @@ NO_CONTEXT_FALLBACK_ANSWER = (
 )
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
-_SOURCE_REF_RE = re.compile(r"\[Nguồn\s*(\d+)(?:\s*:[^\]]*)?\]", re.IGNORECASE)
+_SOURCE_TAG_PATTERN = re.compile(r"\[Nguồn\s*(\d+)(?:\s*:[^\]]*)?\]", re.IGNORECASE)
 _REFUSAL_MARKERS = (
     "không tìm thấy thông tin",
     "chưa tìm thấy thông tin",
@@ -85,35 +85,35 @@ class RAGGenerator:
         return None
 
     @classmethod
-    def _parse_grounded_output(
+    def _parse_llm_output(
         cls,
         raw_text: str,
         total_chunks: int,
-    ) -> GroundedLLMOutput:
+    ) -> StructuredRAGOutput:
         """Bóc tách JSON đầu ra từ LLM và chuẩn hóa chỉ số nguồn; fallback an toàn nếu nhận văn bản thường."""
         cleaned = (raw_text or "").strip()
         data = cls._extract_json_dict(cleaned)
 
         if data is not None and isinstance(data.get("answer"), str) and data["answer"].strip():
             answer = data["answer"].strip()
-            raw_is_answered = data.get("is_answered", True)
-            if isinstance(raw_is_answered, bool):
-                is_answered = raw_is_answered
-            elif isinstance(raw_is_answered, str):
-                is_answered = raw_is_answered.strip().lower() not in ("false", "0", "no")
+            raw_has_context = data.get("has_relevant_context", True)
+            if isinstance(raw_has_context, bool):
+                has_relevant_context = raw_has_context
+            elif isinstance(raw_has_context, str):
+                has_relevant_context = raw_has_context.strip().lower() not in ("false", "0", "no")
             else:
-                is_answered = bool(raw_is_answered)
+                has_relevant_context = bool(raw_has_context)
 
-            if not is_answered:
-                return GroundedLLMOutput(
+            if not has_relevant_context:
+                return StructuredRAGOutput(
                     answer=answer,
-                    cited_source_indices=[],
-                    is_answered=False,
+                    used_source_indices=[],
+                    has_relevant_context=False,
                 )
 
-            raw_indices = data.get("cited_source_indices", [])
+            raw_indices = data.get("used_source_indices", [])
             valid_indices: list[int] = []
-            seen: set[int] = set()
+            seen_indices: set[int] = set()
             if isinstance(raw_indices, list):
                 for item in raw_indices:
                     if isinstance(item, bool):
@@ -124,59 +124,59 @@ class RAGGenerator:
                         idx = int(item.strip())
                     else:
                         continue
-                    if 1 <= idx <= total_chunks and idx not in seen:
-                        seen.add(idx)
+                    if 1 <= idx <= total_chunks and idx not in seen_indices:
+                        seen_indices.add(idx)
                         valid_indices.append(idx)
 
-            return GroundedLLMOutput(
+            return StructuredRAGOutput(
                 answer=answer,
-                cited_source_indices=valid_indices,
-                is_answered=True,
+                used_source_indices=valid_indices,
+                has_relevant_context=True,
             )
 
         # Fallback an toàn khi LLM trả về văn bản thuần (không phải JSON)
-        explicit_indices: list[int] = []
-        seen_refs: set[int] = set()
-        for match in _SOURCE_REF_RE.finditer(cleaned):
+        mentioned_source_indices: list[int] = []
+        seen_indices = set()
+        for match in _SOURCE_TAG_PATTERN.finditer(cleaned):
             idx = int(match.group(1))
-            if 1 <= idx <= total_chunks and idx not in seen_refs:
-                seen_refs.add(idx)
-                explicit_indices.append(idx)
+            if 1 <= idx <= total_chunks and idx not in seen_indices:
+                seen_indices.add(idx)
+                mentioned_source_indices.append(idx)
 
-        if explicit_indices:
-            return GroundedLLMOutput(
+        if mentioned_source_indices:
+            return StructuredRAGOutput(
                 answer=cleaned,
-                cited_source_indices=explicit_indices,
-                is_answered=True,
+                used_source_indices=mentioned_source_indices,
+                has_relevant_context=True,
             )
 
         lowered = cleaned.lower()
         if any(marker in lowered for marker in _REFUSAL_MARKERS):
-            return GroundedLLMOutput(
+            return StructuredRAGOutput(
                 answer=cleaned,
-                cited_source_indices=[],
-                is_answered=False,
+                used_source_indices=[],
+                has_relevant_context=False,
             )
 
         fallback_indices = list(range(1, total_chunks + 1)) if total_chunks > 0 else []
-        return GroundedLLMOutput(
+        return StructuredRAGOutput(
             answer=cleaned,
-            cited_source_indices=fallback_indices,
-            is_answered=True,
+            used_source_indices=fallback_indices,
+            has_relevant_context=True,
         )
 
     @staticmethod
     def _build_sources(
         chunks: list[RetrievedChunk],
-        cited_indices: list[int] | None = None,
+        used_indices: list[int] | None = None,
     ) -> list[SourceCitation]:
         """Chuyển danh sách chunk đã dùng thành danh sách trích dẫn nguồn cho response."""
-        if cited_indices is None:
+        if used_indices is None:
             selected_chunks = chunks
         else:
             selected_chunks = []
             seen_indices: set[int] = set()
-            for idx in cited_indices:
+            for idx in used_indices:
                 if 1 <= idx <= len(chunks) and idx not in seen_indices:
                     seen_indices.add(idx)
                     selected_chunks.append(chunks[idx - 1])
@@ -266,23 +266,23 @@ class RAGGenerator:
         t_gen = time.perf_counter()
         prompt = build_rag_prompt(question=question, chunks=chunks)
         raw_output = self.generate_answer(prompt)
-        grounded = self._parse_grounded_output(raw_output, total_chunks=len(chunks))
+        parsed_output = self._parse_llm_output(raw_output, total_chunks=len(chunks))
         generate_ms = (time.perf_counter() - t_gen) * 1000
         total_ms = (time.perf_counter() - t0) * 1000
 
         logger.info(
-            "RAG timing | retrieve=%.1fms | generate=%.1fms | total=%.1fms | cited=%d/%d",
+            "RAG timing | retrieve=%.1fms | generate=%.1fms | total=%.1fms | used_sources=%d/%d",
             retrieve_ms,
             generate_ms,
             total_ms,
-            len(grounded.cited_source_indices),
+            len(parsed_output.used_source_indices),
             len(chunks),
         )
-        sources = self._build_sources(chunks, cited_indices=grounded.cited_source_indices)
+        sources = self._build_sources(chunks, used_indices=parsed_output.used_source_indices)
 
         return ChatResponse(
             question=question,
-            answer=grounded.answer,
+            answer=parsed_output.answer,
             sources=sources,
         )
 
