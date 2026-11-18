@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api.v1.routers.documents import _run_storage_ingestion_task, ingest_document
 from app.main import app
-from app.schemas.document import IngestFromStorageRequest, IngestionResult
+from app.schemas.document import Chunk, IngestFromStorageRequest, IngestionResult
 from app.services.ingestion.pipeline import IngestionPipeline
 
 
@@ -240,3 +240,70 @@ def test_run_storage_ingestion_task_sends_ready_and_failed_callbacks():
     assert mock_post_err.call_count == 1
     assert mock_post_err.call_args.kwargs["json"]["status"] == "FAILED"
     assert "RustFS timeout" in mock_post_err.call_args.kwargs["json"]["error_message"]
+
+
+def test_pipeline_prepends_title_and_description_only_to_embedding_text():
+    """Kiểm tra embed_texts nhận tiền tố [Tài liệu | Mô tả] nhưng Qdrant payload giữ nguyên content gốc."""
+    docx_bytes = _create_docx_bytes("Sinh viên học mật mã ứng dụng.")
+
+    mock_embedding = MagicMock()
+    mock_embedding.embed_texts.return_value = [[0.3] * 768]
+
+    mock_qdrant = MagicMock()
+    with patch(
+        "app.services.ingestion.pipeline.get_qdrant_client", return_value=mock_qdrant
+    ):
+        test_pipeline = IngestionPipeline(embed_service=mock_embedding)
+
+    with patch("app.services.ingestion.pipeline.init_collection"):
+        result = test_pipeline.ingest_bytes(
+            file_bytes=docx_bytes,
+            filename="53f866dc-442b-4b57-a958-aa88430811eb_QD-CTDT-ATTT.docx",
+            metadata={
+                "title": "Chương trình đào tạo ngành An toàn thông tin (2026)",
+                "description": "Ngành An toàn thông tin (ATTT), mã 7480202",
+            },
+        )
+
+    assert result.status == "success"
+    embedded_texts = mock_embedding.embed_texts.call_args.args[0]
+    assert len(embedded_texts) == 1
+    assert embedded_texts[0].startswith(
+        "[Tài liệu: Chương trình đào tạo ngành An toàn thông tin (2026) | Mô tả: Ngành An toàn thông tin (ATTT), mã 7480202]\n"
+    )
+    assert "Sinh viên học mật mã ứng dụng." in embedded_texts[0]
+
+    upserted_points = mock_qdrant.upsert.call_args.kwargs["points"]
+    payload_content = upserted_points[0].payload["content"]
+    assert not payload_content.startswith("[Tài liệu:")
+    assert "Mô tả:" not in payload_content
+    assert payload_content.startswith("# Thông báo học vụ")
+
+
+def test_build_embedding_text_truncates_to_100_chars_and_strips_uuid_filename():
+    """Kiểm tra cắt gọn tối đa 100 ký tự/phần và bỏ tiền tố UUID khi fallback về filename."""
+    long_title = "T" * 120
+    long_desc = "D" * 130
+    chunk_with_long_meta = Chunk(
+        content="Nội dung bảng môn học.",
+        chunk_index=0,
+        metadata={"title": long_title, "description": long_desc},
+    )
+
+    embedded_long = IngestionPipeline._build_embedding_text(chunk_with_long_meta)
+    expected_prefix = f"[Tài liệu: {'T' * 100} | Mô tả: {'D' * 100}]\n"
+    assert embedded_long == f"{expected_prefix}Nội dung bảng môn học."
+
+    chunk_fallback = Chunk(
+        content="Bảng điều kiện tốt nghiệp.",
+        chunk_index=1,
+        metadata={
+            "title": "   ",
+            "filename": "53f866dc-442b-4b57-a958-aa88430811eb_QD-BanhanhCTDT-Kythuatdulieu-2026.pdf",
+        },
+    )
+    embedded_fallback = IngestionPipeline._build_embedding_text(chunk_fallback)
+    assert (
+        embedded_fallback
+        == "[Tài liệu: QD-BanhanhCTDT-Kythuatdulieu-2026.pdf]\nBảng điều kiện tốt nghiệp."
+    )
