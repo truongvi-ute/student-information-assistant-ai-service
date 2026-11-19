@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,6 +8,27 @@ from app.core.exceptions import LLMTimeoutError
 from app.main import app
 from app.schemas.response import RetrievedChunk
 from app.services.inference.generator import NO_CONTEXT_FALLBACK_ANSWER, RAGGenerator
+
+
+def _make_chunks(count: int) -> list[RetrievedChunk]:
+    """Tạo danh sách RetrievedChunk giả lập phục vụ kiểm thử."""
+    chunks: list[RetrievedChunk] = []
+    for idx in range(1, count + 1):
+        content = f"Nội dung tài liệu số {idx}: Quy định đào tạo phần {idx}."
+        chunks.append(
+            RetrievedChunk(
+                id=f"id-{idx}",
+                content=content,
+                score=round(0.95 - idx * 0.05, 2),
+                chunk_index=idx - 1,
+                document_id=f"doc-uuid-{idx}",
+                filename=f"tai_lieu_{idx}.pdf",
+                page_number=idx,
+                char_start=idx * 100,
+                char_end=idx * 100 + len(content),
+            )
+        )
+    return chunks
 
 
 def test_generator_with_context_builds_prompt_and_sources():
@@ -97,4 +119,119 @@ def test_generator_passes_timeout_and_maps_read_timeout():
 
     call_kwargs = mock_model.generate_content.call_args.kwargs
     assert call_kwargs["request_options"] == {"timeout": 12.5}
+
+
+def test_generator_filters_sources_by_used_indices():
+    """Retriever trả về 5 chunks, LLM chỉ trích dẫn [2] -> response.sources chỉ giữ đúng chunk 2."""
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve.return_value = _make_chunks(5)
+
+    generator = RAGGenerator(retriever=mock_retriever)
+    mock_model = MagicMock()
+    mock_llm_resp = MagicMock()
+    mock_llm_resp.text = json.dumps(
+        {
+            "answer": "Theo tài liệu số 2 (trang 2), quy định đào tạo phần 2 được áp dụng.",
+            "used_source_indices": [2],
+            "has_relevant_context": True,
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = mock_llm_resp
+    generator._model = mock_model
+
+    response = generator.answer_question("Quy định phần 2 là gì?", top_k=5)
+
+    assert "tài liệu số 2" in response.answer
+    assert len(response.sources) == 1
+    assert response.sources[0].document_id == "doc-uuid-2"
+    assert response.sources[0].filename == "tai_lieu_2.pdf"
+    assert response.sources[0].page_number == 2
+
+
+def test_generator_returns_empty_sources_when_no_relevant_context():
+    """Khi ngữ cảnh nhiễu (has_relevant_context=false), ép danh sách sources về rỗng dù LLM có lỡ liệt kê index."""
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve.return_value = _make_chunks(5)
+
+    generator = RAGGenerator(retriever=mock_retriever)
+    mock_model = MagicMock()
+    mock_llm_resp = MagicMock()
+    mock_llm_resp.text = json.dumps(
+        {
+            "answer": (
+                "Hiện tại tài liệu chưa có thông tin về học phí ký túc xá. "
+                "Bạn có thể hỏi về chương trình đào tạo hoặc liên hệ Phòng Đào tạo nhé."
+            ),
+            "used_source_indices": [1],
+            "has_relevant_context": False,
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = mock_llm_resp
+    generator._model = mock_model
+
+    response = generator.answer_question("Học phí ký túc xá bao nhiêu?")
+
+    assert "chưa có thông tin" in response.answer
+    assert response.sources == []
+
+
+def test_generator_parses_fenced_json_and_deduplicates_invalid_indices():
+    """Hỗ trợ bóc tách JSON bọc trong ```json ... ``` và bỏ qua chỉ số trùng lặp hoặc ngoài phạm vi."""
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve.return_value = _make_chunks(3)
+
+    generator = RAGGenerator(retriever=mock_retriever)
+    mock_model = MagicMock()
+    mock_llm_resp = MagicMock()
+    mock_llm_resp.text = (
+        "```json\n"
+        '{"answer": "Thông tin tổng hợp từ nguồn 3 và nguồn 1.", '
+        '"used_source_indices": [3, 3, 99, 0, -1, 1], "has_relevant_context": true}\n'
+        "```"
+    )
+    mock_model.generate_content.return_value = mock_llm_resp
+    generator._model = mock_model
+
+    response = generator.answer_question("Tổng hợp thông tin?")
+
+    assert response.answer == "Thông tin tổng hợp từ nguồn 3 và nguồn 1."
+    assert [src.filename for src in response.sources] == ["tai_lieu_3.pdf", "tai_lieu_1.pdf"]
+
+
+def test_generator_plain_text_fallback_remains_safe():
+    """Đảm bảo khi LLM trả văn bản thuần không phải JSON thì vẫn hoạt động an toàn và không crash."""
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve.return_value = _make_chunks(3)
+
+    generator = RAGGenerator(retriever=mock_retriever)
+    mock_model = MagicMock()
+
+    # Trường hợp 1: Văn bản thuần có nhắc rõ [Nguồn 2]
+    resp_with_ref = MagicMock()
+    resp_with_ref.text = "Theo [Nguồn 2], sinh viên thực hiện theo quy định phần 2."
+    mock_model.generate_content.return_value = resp_with_ref
+    generator._model = mock_model
+
+    response_ref = generator.answer_question("Quy định phần 2?")
+    assert response_ref.answer == resp_with_ref.text
+    assert [src.filename for src in response_ref.sources] == ["tai_lieu_2.pdf"]
+
+    # Trường hợp 2: Văn bản thuần là câu từ chối
+    resp_refusal = MagicMock()
+    resp_refusal.text = "Hiện tại hệ thống không tìm thấy thông tin về nội dung này."
+    mock_model.generate_content.return_value = resp_refusal
+
+    response_refusal = generator.answer_question("Hỏi ngoài phạm vi?")
+    assert response_refusal.sources == []
+
+    # Trường hợp 3: Văn bản thuần thông thường không nhắc [Nguồn i]
+    resp_plain = MagicMock()
+    resp_plain.text = "Sinh viên cần hoàn thành đầy đủ học phần theo kế hoạch."
+    mock_model.generate_content.return_value = resp_plain
+
+    response_plain = generator.answer_question("Kế hoạch học tập?")
+    assert response_plain.answer == resp_plain.text
+    assert len(response_plain.sources) == 3
 

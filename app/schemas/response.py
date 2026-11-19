@@ -48,3 +48,17 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="Danh sách các nguồn tài liệu đã dùng để trả lời",
     )
+
+
+class StructuredRAGOutput(BaseModel):
+    """Đầu ra có cấu trúc từ LLM để kiểm soát trích dẫn nguồn chính xác (Selective Citation)."""
+
+    answer: str = Field(..., description="Câu trả lời hoàn chỉnh dành cho sinh viên (định dạng Markdown)")
+    used_source_indices: list[int] = Field(
+        default_factory=list,
+        description="Danh sách số thứ tự các [Nguồn i] (bắt đầu từ 1) thực sự được sử dụng để viết câu trả lời",
+    )
+    has_relevant_context: bool = Field(
+        default=True,
+        description="True nếu ngữ cảnh có thông tin trả lời; False nếu phải từ chối/điều hướng do thiếu thông tin",
+    )
