@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+
 from app.core.exceptions import (
     EmbeddingError,
     LLMGenerationError,
@@ -33,12 +34,13 @@ async def search_documents(payload: SearchRequest):
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_rag(payload: ChatRequest):
-    """Hỏi đáp RAG dựa trên tài liệu học vụ kèm trích dẫn nguồn (Step 4)."""
+    """Hỏi đáp RAG dựa trên tài liệu học vụ kèm lịch sử hội thoại và trích dẫn nguồn (Step 4)."""
     try:
         return rag_generator.answer_question(
             question=payload.question,
             top_k=payload.top_k,
             filename_filter=payload.filename_filter,
+            history=payload.history,
         )
     except LLMTimeoutError as e:
         raise HTTPException(status_code=504, detail=e.message)

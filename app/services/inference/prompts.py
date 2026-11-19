@@ -1,3 +1,4 @@
+from app.schemas.request import ChatHistoryMessage
 from app.schemas.response import RetrievedChunk
 
 SYSTEM_PROMPT = """Bạn là Trợ lý Thông tin Sinh viên (SIA) — Cố vấn học vụ thân thiện, tận tâm và chính xác của nhà trường.
@@ -21,9 +22,78 @@ QUY TẮC BẮT BUỘC:
        "has_relevant_context": true
      }"""
 
+QUERY_ANALYZER_PROMPT = """Bạn là bộ phân tích câu hỏi thông minh cho Trợ lý Thông tin Sinh viên (SIA).
+Nhiệm vụ của bạn là đọc hiểu [LỊCH SỬ HỘI THOẠI GẦN ĐÂY] và [CÂU HỎI HIỆN TẠI] để:
+1. Phân loại câu hỏi vào đúng 1 trong 2 nhánh: "academic_rag" hoặc "non_academic".
+2. Đánh giá theo Tiêu chuẩn câu truy vấn độc lập (Self-Contained Criterion): Nếu một hệ thống tìm kiếm tài liệu chỉ đọc duy nhất câu hỏi hiện tại (không đọc lịch sử) thì đã biết rõ sinh viên đang hỏi về ngành nào, môn nào hay quy chế nào chưa.
 
-def build_rag_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
-    """Ghép nối danh sách các đoạn tài liệu truy xuất được và câu hỏi thành prompt hoàn chỉnh."""
+QUY TẮC XỬ LÝ 3 KỊCH BẢN:
+
+KỊCH BẢN 1 — Câu hỏi học vụ đã rõ ràng hoặc là quy chế chung ("academic_rag", giữ nguyên):
+- Câu hỏi đã nêu rõ tên ngành, tên môn học, hoặc hỏi về quy định/quy chế học vụ chung toàn trường (ví dụ: "Điều kiện tốt nghiệp ngành Kỹ thuật dữ liệu là gì?", "Cách tính điểm GPA hệ 4 như thế nào?", "Quy định cảnh báo học vụ ra sao?").
+- Nếu câu hỏi vừa chào hỏi vừa hỏi thông tin học vụ (ví dụ: "Chào bạn, ngành CNTT học mấy năm?"), hoặc bạn còn nghi ngờ câu hỏi có liên quan đến học vụ -> LUÔN ưu tiên chọn "academic_rag".
+- Đặt: "intent": "academic_rag", "standalone_query": giữ nguyên câu hỏi hiện tại, "direct_response": null.
+
+KỊCH BẢN 2 — Câu hỏi học vụ bị khuyết ngữ cảnh NHƯNG trong lịch sử ĐÃ CÓ chủ thể ("academic_rag", viết lại):
+- Câu hỏi hiện tại bị ẩn chủ ngữ (ví dụ: "Học mấy năm?", "Cần bao nhiêu tín chỉ?", "Còn cơ hội việc làm thì sao?") hoặc dùng từ thay thế (ví dụ: "ngành đó", "môn này", "chương trình ấy"), VÀ trong [LỊCH SỬ HỘI THOẠI GẦN ĐÂY] đã nhắc rõ tên ngành/môn/quy chế tương ứng.
+- Bao gồm cả trường hợp ở lượt trước Trợ lý vừa hỏi ngược lại sinh viên để làm rõ tên ngành/môn và ở lượt hiện tại sinh viên chỉ trả lời tên ngành/môn (ví dụ: "Ngành An toàn thông tin"): hãy ghép tên ngành đó với nội dung sinh viên muốn hỏi ở lượt trước thành một câu truy vấn hoàn chỉnh.
+- Lưu ý: Nếu câu hỏi hiện tại đã nêu rõ một ngành/chủ đề MỚI khác với lịch sử, KHÔNG ghép ngành cũ từ lịch sử vào.
+- Đặt: "intent": "academic_rag", "standalone_query": câu hỏi hoàn chỉnh đã ghép rõ tên ngành/môn/chủ thể, "direct_response": null.
+
+KỊCH BẢN 3 — Trả lời trực tiếp không truy vấn tài liệu ("non_academic", sinh "direct_response"):
+Chỉ chọn "non_academic" trong 2 trường hợp rõ ràng sau:
+- Trường hợp 3a (Hỏi ngược lại để làm rõ ngữ cảnh - Clarification): Câu hỏi học vụ phụ thuộc chặt chẽ vào một ngành học / chương trình đào tạo / môn học cụ thể (ví dụ: "Các môn chuyên ngành gồm những môn nào?", "Ngành này học bao nhiêu tín chỉ?", "Chuẩn đầu ra ngoại ngữ của ngành là gì?") nhưng CẢ câu hỏi hiện tại LẪN [LỊCH SỬ HỘI THOẠI GẦN ĐÂY] đều CHƯA từng nhắc tới tên ngành/môn nào (và chưa có tài liệu được lọc sẵn). Tuyệt đối không tự đoán tên ngành -> đặt "intent": "non_academic", giữ nguyên "standalone_query", và viết "direct_response" lịch sự hỏi ngược lại sinh viên đang muốn tra cứu cho ngành học hoặc chương trình đào tạo nào.
+- Trường hợp 3b (Chào hỏi xã giao & Ngoài phạm vi - Chitchat & Out-of-scope): Tin nhắn thuần túy là chào hỏi, cảm ơn, hỏi danh tính trợ lý hoặc câu hỏi hoàn toàn ngoài phạm vi giáo dục/học vụ nhà trường (thời tiết, nấu ăn, giải trí, bóng đá...). Đặt "intent": "non_academic", giữ nguyên "standalone_query", và viết "direct_response" phản hồi thân thiện, tự nhiên theo ngữ cảnh, đồng thời luôn khép lại bằng lời dẫn dắt về các chủ đề học vụ mà SIA hỗ trợ (chương trình đào tạo, danh mục môn học, số tín chỉ, chuẩn đầu ra, quy chế học vụ, điều kiện tốt nghiệp).
+
+ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
+Trả về DUY NHẤT một đối tượng JSON hợp lệ (không kèm văn bản thừa bên ngoài) theo cấu trúc:
+{
+  "intent": "academic_rag" | "non_academic",
+  "standalone_query": "...",
+  "direct_response": "..." | null
+}"""
+
+
+def format_chat_history(
+    history: list[ChatHistoryMessage] | None,
+    max_messages: int = 6,
+) -> str:
+    """Định dạng tối đa max_messages tin nhắn gần nhất trong lịch sử hội thoại."""
+    if not history:
+        return "(Chưa có lịch sử hội thoại)"
+
+    recent = history[-max_messages:]
+    lines: list[str] = []
+    for msg in recent:
+        speaker = "Sinh viên" if msg.role == "user" else "Trợ lý"
+        lines.append(f"- {speaker}: {msg.content}")
+    return "\n".join(lines)
+
+
+def build_query_analysis_prompt(
+    question: str,
+    history: list[ChatHistoryMessage] | None = None,
+    filename_filter: str | None = None,
+) -> str:
+    """Tạo prompt phân tích ý định, làm rõ ngữ cảnh và viết lại câu truy vấn độc lập."""
+    sections = [
+        QUERY_ANALYZER_PROMPT,
+        f"[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]\n{format_chat_history(history, max_messages=6)}",
+    ]
+    if filename_filter and filename_filter.strip():
+        sections.append(f"[TÀI LIỆU ĐANG LỌC SẴN]\n{filename_filter.strip()}")
+    sections.append(f"[CÂU HỎI HIỆN TẠI]\n{question}")
+    sections.append("[KẾT QUẢ PHÂN TÍCH (JSON)]")
+    return "\n\n".join(sections)
+
+
+def build_rag_prompt(
+    question: str,
+    chunks: list[RetrievedChunk],
+    history: list[ChatHistoryMessage] | None = None,
+    standalone_query: str | None = None,
+) -> str:
+    """Ghép nối danh sách các đoạn tài liệu truy xuất được, lịch sử hội thoại và câu hỏi thành prompt hoàn chỉnh."""
     context_blocks: list[str] = []
 
     for idx, chunk in enumerate(chunks, start=1):
@@ -34,9 +104,20 @@ def build_rag_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
 
     formatted_context = "\n\n---\n\n".join(context_blocks)
 
-    return (
-        f"{SYSTEM_PROMPT}\n\n"
-        f"[NGỮ CẢNH TÀI LIỆU]\n{formatted_context}\n\n"
-        f"[CÂU HỎI CỦA SINH VIÊN]\n{question}\n\n"
-        f"[CÂU TRẢ LỜI (JSON)]"
-    )
+    sections = [
+        SYSTEM_PROMPT,
+        f"[NGỮ CẢNH TÀI LIỆU]\n{formatted_context}",
+    ]
+
+    if history:
+        sections.append(
+            f"[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]\n{format_chat_history(history, max_messages=6)}"
+        )
+
+    if standalone_query and standalone_query.strip() and standalone_query.strip() != question.strip():
+        sections.append(f"[CÂU HỎI ĐÃ LÀM RÕ NGỮ CẢNH]\n{standalone_query.strip()}")
+
+    sections.append(f"[CÂU HỎI CỦA SINH VIÊN]\n{question}")
+    sections.append("[CÂU TRẢ LỜI (JSON)]")
+
+    return "\n\n".join(sections)
