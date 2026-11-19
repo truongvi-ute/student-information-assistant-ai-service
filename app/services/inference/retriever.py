@@ -1,5 +1,6 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+
 from app.core.config import settings
 from app.core.exceptions import RetrievalError
 from app.core.logging import logger
@@ -101,7 +102,7 @@ class VectorRetriever:
                     )
                 )
 
-            logger.info("Truy xuất được %d chunks cho câu hỏi: '%s'", len(chunks), cleaned_query[:50])
+            logger.info("Truy xuất được %d chunks cho truy vấn: %r", len(chunks), cleaned_query)
             return chunks
 
         except Exception as e:
@@ -155,7 +156,16 @@ class VectorRetriever:
                 elif candidate.score > existing.score:
                     merged_by_id[candidate.id] = candidate
 
-        return list(merged_by_id.values())
+        merged_chunks = list(merged_by_id.values())
+        per_query_counts = [len(lst) for lst in per_query_results]
+        logger.info(
+            "retrieve_multi_queries | branches=%d | per_query_hits=%s | merged=%d/%d",
+            len(cleaned_queries),
+            per_query_counts,
+            len(merged_chunks),
+            max_total_chunks,
+        )
+        return merged_chunks
 
 
 # Instance mặc định dùng cho toàn ứng dụng

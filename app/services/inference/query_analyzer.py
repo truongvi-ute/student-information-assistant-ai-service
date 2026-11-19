@@ -272,23 +272,41 @@ class QueryAnalyzer:
                 result.intent == "academic_rag"
                 and result.standalone_query.strip() != cleaned_question
             )
-            if rewritten:
+            if result.intent == "non_academic":
                 logger.info(
-                    "QueryAnalyzer | source=llm | intent=%s | rewritten=True | sub_queries=%d | original=%r -> standalone=%r | decomposed=%r",
+                    "QueryAnalyzer | source=llm | intent=non_academic | question=%r | direct_response=%r",
+                    cleaned_question,
+                    result.direct_response,
+                )
+            elif rewritten:
+                logger.info(
+                    "QueryAnalyzer | source=llm | intent=%s | rewritten=True | original=%r -> standalone=%r",
                     result.intent,
-                    len(result.sub_queries),
                     cleaned_question,
                     result.standalone_query,
-                    result.sub_queries,
                 )
             else:
                 logger.info(
-                    "QueryAnalyzer | source=llm | intent=%s | rewritten=False | sub_queries=%d | question=%r | decomposed=%r",
+                    "QueryAnalyzer | source=llm | intent=%s | rewritten=False | standalone=%r",
                     result.intent,
-                    len(result.sub_queries),
-                    cleaned_question,
-                    result.sub_queries,
+                    result.standalone_query,
                 )
+
+            if result.intent == "academic_rag":
+                if len(result.sub_queries) > 1:
+                    formatted_subs = " | ".join(
+                        f"[{idx}] {sq!r}" for idx, sq in enumerate(result.sub_queries, start=1)
+                    )
+                    logger.info(
+                        "QueryAnalyzer | decomposed (%d sub-queries): %s",
+                        len(result.sub_queries),
+                        formatted_subs,
+                    )
+                else:
+                    logger.info(
+                        "QueryAnalyzer | single-query (sub_queries=1): %r",
+                        result.sub_queries[0] if result.sub_queries else result.standalone_query,
+                    )
             return result
         except Exception as e:  # noqa: BLE001
             logger.warning(
