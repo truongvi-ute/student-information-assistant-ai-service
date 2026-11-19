@@ -238,7 +238,8 @@ class RAGGenerator:
 
         if analysis.intent == "non_academic" and analysis.direct_response:
             logger.info(
-                "Adaptive routing | intent=non_academic | analyze=%.1fms | skip_retrieval=True",
+                "Adaptive routing | intent=non_academic | question=%r | analyze=%.1fms | skip_retrieval=True",
+                question,
                 analyze_ms,
             )
             return ChatResponse(
@@ -248,6 +249,7 @@ class RAGGenerator:
             )
 
         effective_query = analysis.standalone_query.strip() or question
+        rewritten = effective_query != question.strip()
 
         # 2. Truy xuất các đoạn văn bản liên quan bằng câu truy vấn đã làm rõ ngữ cảnh
         t_ret = time.perf_counter()
@@ -286,7 +288,9 @@ class RAGGenerator:
         total_ms = (time.perf_counter() - t0) * 1000
 
         logger.info(
-            "RAG timing | analyze=%.1fms | retrieve=%.1fms | generate=%.1fms | total=%.1fms | used_sources=%d/%d",
+            "RAG timing | intent=academic_rag | rewritten=%s | query=%r | analyze=%.1fms | retrieve=%.1fms | generate=%.1fms | total=%.1fms | used_sources=%d/%d",
+            rewritten,
+            effective_query,
             analyze_ms,
             retrieve_ms,
             generate_ms,

@@ -194,6 +194,10 @@ class QueryAnalyzer:
         if not history:
             fast_reply = self._match_fast_path(cleaned_question)
             if fast_reply is not None:
+                logger.info(
+                    "QueryAnalyzer | source=fast_path | intent=non_academic | rewritten=False | question=%r",
+                    cleaned_question,
+                )
                 return QueryAnalysisResult(
                     intent="non_academic",
                     standalone_query=cleaned_question,
@@ -215,7 +219,25 @@ class QueryAnalyzer:
                 request_options={"timeout": self.timeout_seconds},
             )
             raw_text = (response.text or "").strip()
-            return self._parse_analysis_output(raw_text, original_question=cleaned_question)
+            result = self._parse_analysis_output(raw_text, original_question=cleaned_question)
+            rewritten = (
+                result.intent == "academic_rag"
+                and result.standalone_query.strip() != cleaned_question
+            )
+            if rewritten:
+                logger.info(
+                    "QueryAnalyzer | source=llm | intent=%s | rewritten=True | original=%r -> standalone=%r",
+                    result.intent,
+                    cleaned_question,
+                    result.standalone_query,
+                )
+            else:
+                logger.info(
+                    "QueryAnalyzer | source=llm | intent=%s | rewritten=False | question=%r",
+                    result.intent,
+                    cleaned_question,
+                )
+            return result
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "QueryAnalyzer gặp lỗi khi gọi LLM, fallback về academic_rag: %s",
