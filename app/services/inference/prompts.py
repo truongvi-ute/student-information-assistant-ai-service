@@ -98,6 +98,7 @@ def build_rag_prompt(
     chunks: list[RetrievedChunk],
     history: list[ChatHistoryMessage] | None = None,
     standalone_query: str | None = None,
+    sub_queries: list[str] | None = None,
 ) -> str:
     """Ghép nối danh sách các đoạn tài liệu truy xuất được, lịch sử hội thoại và câu hỏi thành prompt hoàn chỉnh."""
     context_blocks: list[str] = []
@@ -122,6 +123,16 @@ def build_rag_prompt(
 
     if standalone_query and standalone_query.strip() and standalone_query.strip() != question.strip():
         sections.append(f"[CÂU HỎI ĐÃ LÀM RÕ NGỮ CẢNH]\n{standalone_query.strip()}")
+
+    if sub_queries and len(sub_queries) > 1:
+        sub_lines = "\n".join(f"- {sq}" for sq in sub_queries)
+        sections.append(
+            "[CÁC NỘI DUNG CẦN ĐỐI CHIẾU / TỔNG HỢP]\n"
+            f"{sub_lines}\n"
+            "(Hãy đảm bảo giải đáp đầy đủ từng ý trên dựa trên [NGỮ CẢNH TÀI LIỆU]; "
+            "nếu câu hỏi mang tính so sánh, nên trình bày rõ ràng theo từng mục hoặc bảng đối chiếu "
+            "và liệt kê đủ chỉ số [Nguồn i] của tất cả tài liệu đã dùng.)"
+        )
 
     sections.append(f"[CÂU HỎI CỦA SINH VIÊN]\n{question}")
     sections.append("[CÂU TRẢ LỜI (JSON)]")
