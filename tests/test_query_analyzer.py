@@ -189,3 +189,94 @@ def test_query_analyzer_falls_back_safely_on_llm_error_or_invalid_json():
     invalid_res = analyzer.analyze(question="Quy chế thi kết thúc học phần?")
     assert invalid_res.intent == "academic_rag"
     assert invalid_res.standalone_query == "Quy chế thi kết thúc học phần?"
+    assert invalid_res.sub_queries == ["Quy chế thi kết thúc học phần?"]
+
+
+def test_query_analyzer_decomposes_comparative_query_and_caps_sub_queries():
+    """Câu hỏi so sánh 2 ngành được tách thành các sub_queries độc lập, khử trùng lặp và giới hạn tối đa 3."""
+    analyzer = QueryAnalyzer(api_key="test-key")
+    mock_model = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.text = json.dumps(
+        {
+            "intent": "academic_rag",
+            "standalone_query": "So sánh các môn học chuyên ngành giữa An toàn thông tin và Kỹ thuật dữ liệu",
+            "sub_queries": [
+                "Danh sách môn học chuyên ngành của ngành An toàn thông tin",
+                "Danh sách môn học chuyên ngành của ngành Kỹ thuật dữ liệu",
+            ],
+            "direct_response": None,
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = mock_resp
+    analyzer._model = mock_model
+
+    result = analyzer.analyze(question="So sánh môn học chuyên ngành ATTT và KTDL?")
+
+    assert result.intent == "academic_rag"
+    assert len(result.sub_queries) == 2
+    assert "An toàn thông tin" in result.sub_queries[0]
+    assert "Kỹ thuật dữ liệu" in result.sub_queries[1]
+
+    # Kiểm tra khử trùng lặp, bỏ chuỗi rỗng và giới hạn tối đa 3 sub_queries
+    over_limit_resp = MagicMock()
+    over_limit_resp.text = json.dumps(
+        {
+            "intent": "academic_rag",
+            "standalone_query": "So sánh 4 ngành học",
+            "sub_queries": [
+                "   ",
+                "Chương trình đào tạo ngành An toàn thông tin",
+                "chương trình đào tạo ngành An toàn thông tin",
+                "Chương trình đào tạo ngành Kỹ thuật dữ liệu",
+                "Chương trình đào tạo ngành Công nghệ thông tin",
+                "Chương trình đào tạo ngành Khoa học máy tính",
+            ],
+            "direct_response": None,
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = over_limit_resp
+    capped = analyzer.analyze(question="So sánh 4 ngành học?")
+
+    assert capped.sub_queries == [
+        "Chương trình đào tạo ngành An toàn thông tin",
+        "Chương trình đào tạo ngành Kỹ thuật dữ liệu",
+        "Chương trình đào tạo ngành Công nghệ thông tin",
+    ]
+
+
+def test_query_analyzer_defaults_sub_queries_on_missing_or_non_academic():
+    """Nếu LLM không trả sub_queries cho academic_rag thì fallback [standalone_query]; non_academic luôn rỗng."""
+    analyzer = QueryAnalyzer(api_key="test-key")
+    mock_model = MagicMock()
+    analyzer._model = mock_model
+
+    missing_sub_resp = MagicMock()
+    missing_sub_resp.text = json.dumps(
+        {
+            "intent": "academic_rag",
+            "standalone_query": "Chuẩn đầu ra ngoại ngữ ngành An toàn thông tin là gì?",
+            "direct_response": None,
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = missing_sub_resp
+    res_single = analyzer.analyze(question="Chuẩn đầu ra ngoại ngữ ngành ATTT?")
+    assert res_single.sub_queries == ["Chuẩn đầu ra ngoại ngữ ngành An toàn thông tin là gì?"]
+
+    non_academic_resp = MagicMock()
+    non_academic_resp.text = json.dumps(
+        {
+            "intent": "non_academic",
+            "standalone_query": "Ngành này học mấy năm?",
+            "sub_queries": ["Ngành này học mấy năm?"],
+            "direct_response": "Bạn muốn tra cứu ngành nào?",
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = non_academic_resp
+    res_non_acad = analyzer.analyze(question="Ngành này học mấy năm?")
+    assert res_non_acad.intent == "non_academic"
+    assert res_non_acad.sub_queries == []

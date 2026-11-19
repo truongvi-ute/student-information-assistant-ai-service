@@ -16,7 +16,7 @@ router = APIRouter()
 
 @router.post("/search", response_model=SearchResponse)
 async def search_documents(payload: SearchRequest):
-    """Truy xuất top-k đoạn văn bản liên quan nhất từ Qdrant (Step 3)."""
+    """Truy xuất top-k đoạn văn bản liên quan nhất từ Qdrant."""
     try:
         chunks = vector_retriever.retrieve(
             query=payload.query,
@@ -34,7 +34,7 @@ async def search_documents(payload: SearchRequest):
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_rag(payload: ChatRequest):
-    """Hỏi đáp RAG dựa trên tài liệu học vụ kèm lịch sử hội thoại và trích dẫn nguồn (Step 4)."""
+    """Hỏi đáp RAG dựa trên tài liệu học vụ kèm lịch sử hội thoại và trích dẫn nguồn."""
     try:
         return rag_generator.answer_question(
             question=payload.question,

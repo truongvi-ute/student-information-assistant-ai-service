@@ -394,3 +394,115 @@ def test_api_chat_validates_and_forwards_history():
     assert forwarded_history[1].role == "assistant"
 
 
+def test_generator_orchestrates_multi_query_retrieval_for_comparison():
+    """Khi QueryAnalyzer trả về >1 sub_queries, RAGGenerator gọi retrieve_multi_queries và trích dẫn cả 2 nguồn."""
+    sub_queries = [
+        "Danh sách môn học chuyên ngành của ngành An toàn thông tin",
+        "Danh sách môn học chuyên ngành của ngành Kỹ thuật dữ liệu",
+    ]
+    mock_analyzer = MagicMock()
+    mock_analyzer.analyze.return_value = QueryAnalysisResult(
+        intent="academic_rag",
+        standalone_query="So sánh môn học chuyên ngành của ngành An toàn thông tin và ngành Kỹ thuật dữ liệu",
+        sub_queries=sub_queries,
+        direct_response=None,
+    )
+
+    attt_chunk = RetrievedChunk(
+        id="p-attt-1",
+        content="Ngành An toàn thông tin gồm các môn chuyên ngành: Mật mã học, An ninh mạng.",
+        score=0.88,
+        chunk_index=3,
+        document_id="doc-attt",
+        filename="attt.docx",
+        page_number=4,
+        char_start=100,
+        char_end=175,
+    )
+    ktdl_chunk = RetrievedChunk(
+        id="p-ktdl-1",
+        content="Ngành Kỹ thuật dữ liệu gồm các môn chuyên ngành: Kho dữ liệu, Xử lý dữ liệu lớn.",
+        score=0.86,
+        chunk_index=3,
+        document_id="doc-ktdl",
+        filename="ktdl.docx",
+        page_number=4,
+        char_start=120,
+        char_end=200,
+    )
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_multi_queries.return_value = [attt_chunk, ktdl_chunk]
+
+    generator = RAGGenerator(retriever=mock_retriever, query_analyzer=mock_analyzer)
+    mock_model = MagicMock()
+    mock_llm_resp = MagicMock()
+    mock_llm_resp.text = json.dumps(
+        {
+            "answer": "ATTT tập trung vào Mật mã học, An ninh mạng [Nguồn 1]; KTDL tập trung vào Kho dữ liệu, Xử lý dữ liệu lớn [Nguồn 2].",
+            "used_source_indices": [1, 2],
+            "has_relevant_context": True,
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = mock_llm_resp
+    generator._model = mock_model
+
+    response = generator.answer_question(
+        question="So sánh các môn chuyên ngành của ATTT và KTDL?",
+        top_k=5,
+    )
+
+    mock_retriever.retrieve.assert_not_called()
+    mock_retriever.retrieve_multi_queries.assert_called_once_with(
+        queries=sub_queries,
+        top_k_per_query=3,
+        max_total_chunks=6,
+        filename_filter=None,
+    )
+    sent_prompt = mock_model.generate_content.call_args.args[0]
+    assert "[CÁC NỘI DUNG CẦN ĐỐI CHIẾU / TỔNG HỢP]" in sent_prompt
+    assert sub_queries[0] in sent_prompt
+    assert sub_queries[1] in sent_prompt
+    assert [src.filename for src in response.sources] == ["attt.docx", "ktdl.docx"]
+
+
+def test_generator_uses_single_retrieve_when_only_one_sub_query():
+    """Khi QueryAnalyzer chỉ trả về 1 sub_query, giữ nguyên luồng retrieve() đơn lẻ."""
+    mock_analyzer = MagicMock()
+    mock_analyzer.analyze.return_value = QueryAnalysisResult(
+        intent="academic_rag",
+        standalone_query="Ngành Kỹ thuật dữ liệu học mấy năm?",
+        sub_queries=["Ngành Kỹ thuật dữ liệu học mấy năm?"],
+        direct_response=None,
+    )
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve.return_value = _make_chunks(1)
+
+    generator = RAGGenerator(retriever=mock_retriever, query_analyzer=mock_analyzer)
+    mock_model = MagicMock()
+    mock_llm_resp = MagicMock()
+    mock_llm_resp.text = json.dumps(
+        {
+            "answer": "Ngành Kỹ thuật dữ liệu đào tạo trong 4 năm.",
+            "used_source_indices": [1],
+            "has_relevant_context": True,
+        },
+        ensure_ascii=False,
+    )
+    mock_model.generate_content.return_value = mock_llm_resp
+    generator._model = mock_model
+
+    response = generator.answer_question("Ngành Kỹ thuật dữ liệu học mấy năm?", top_k=5)
+
+    mock_retriever.retrieve.assert_called_once_with(
+        query="Ngành Kỹ thuật dữ liệu học mấy năm?",
+        top_k=5,
+        filename_filter=None,
+    )
+    mock_retriever.retrieve_multi_queries.assert_not_called()
+    sent_prompt = mock_model.generate_content.call_args.args[0]
+    assert "[CÁC NỘI DUNG CẦN ĐỐI CHIẾU / TỔNG HỢP]" not in sent_prompt
+    assert len(response.sources) == 1
+
+
+

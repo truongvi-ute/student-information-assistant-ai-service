@@ -82,8 +82,11 @@ def extract_json_dict(raw_text: str) -> dict[str, Any] | None:
     return None
 
 
+MAX_SUB_QUERIES = 3
+
+
 class QueryAnalysisResult(BaseModel):
-    """Kết quả phân tích ý định, làm rõ ngữ cảnh và viết lại câu truy vấn."""
+    """Kết quả phân tích ý định, làm rõ ngữ cảnh, viết lại và phân rã câu truy vấn."""
 
     intent: Literal["academic_rag", "non_academic"] = Field(
         default="academic_rag",
@@ -92,6 +95,10 @@ class QueryAnalysisResult(BaseModel):
     standalone_query: str = Field(
         ...,
         description="Câu hỏi độc lập đầy đủ ngữ cảnh để tìm kiếm trên Qdrant",
+    )
+    sub_queries: list[str] = Field(
+        default_factory=list,
+        description="Danh sách các câu truy vấn con độc lập (1 câu nếu hỏi đơn; 2-3 câu nếu so sánh nhiều ngành/tài liệu)",
     )
     direct_response: str | None = Field(
         default=None,
@@ -136,13 +143,46 @@ class QueryAnalyzer:
         return None
 
     @staticmethod
-    def _parse_analysis_output(raw_text: str, original_question: str) -> QueryAnalysisResult:
+    def _normalize_sub_queries(
+        raw_sub_queries: Any,
+        standalone_query: str,
+        max_queries: int = MAX_SUB_QUERIES,
+    ) -> list[str]:
+        """Chuẩn hóa danh sách câu truy vấn con: lọc rỗng, khử trùng lặp và giới hạn tối đa max_queries."""
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        if isinstance(raw_sub_queries, list):
+            for item in raw_sub_queries:
+                if not isinstance(item, str):
+                    continue
+                cleaned = " ".join(item.split())
+                if not cleaned:
+                    continue
+                dedup_key = cleaned.casefold()
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                normalized.append(cleaned)
+                if len(normalized) >= max_queries:
+                    break
+
+        if not normalized:
+            fallback = " ".join(standalone_query.split())
+            return [fallback] if fallback else []
+
+        return normalized
+
+    @classmethod
+    def _parse_analysis_output(cls, raw_text: str, original_question: str) -> QueryAnalysisResult:
         """Bóc tách JSON đầu ra từ LLM thành QueryAnalysisResult an toàn."""
         data = extract_json_dict((raw_text or "").strip())
+        fallback_sub_queries = [original_question] if original_question.strip() else []
         if data is None:
             return QueryAnalysisResult(
                 intent="academic_rag",
                 standalone_query=original_question,
+                sub_queries=fallback_sub_queries,
             )
 
         raw_intent = str(data.get("intent", "academic_rag")).strip().lower()
@@ -167,12 +207,18 @@ class QueryAnalyzer:
             return QueryAnalysisResult(
                 intent="non_academic",
                 standalone_query=original_question,
+                sub_queries=[],
                 direct_response=direct_response,
             )
 
+        sub_queries = cls._normalize_sub_queries(
+            data.get("sub_queries"),
+            standalone_query=standalone_query,
+        )
         return QueryAnalysisResult(
             intent="academic_rag",
             standalone_query=standalone_query,
+            sub_queries=sub_queries,
             direct_response=None,
         )
 
@@ -182,12 +228,13 @@ class QueryAnalyzer:
         history: list[ChatHistoryMessage] | None = None,
         filename_filter: str | None = None,
     ) -> QueryAnalysisResult:
-        """Phân tích ý định câu hỏi, hỏi làm rõ nếu thiếu ngữ cảnh hoặc viết lại câu truy vấn độc lập."""
+        """Phân tích ý định câu hỏi, hỏi làm rõ nếu thiếu ngữ cảnh, viết lại hoặc phân rã câu truy vấn."""
         cleaned_question = question.strip()
         if not cleaned_question:
             return QueryAnalysisResult(
                 intent="non_academic",
                 standalone_query=question,
+                sub_queries=[],
                 direct_response=DEFAULT_NON_ACADEMIC_RESPONSE,
             )
 
@@ -201,6 +248,7 @@ class QueryAnalyzer:
                 return QueryAnalysisResult(
                     intent="non_academic",
                     standalone_query=cleaned_question,
+                    sub_queries=[],
                     direct_response=fast_reply,
                 )
 
@@ -224,7 +272,13 @@ class QueryAnalyzer:
                 result.intent == "academic_rag"
                 and result.standalone_query.strip() != cleaned_question
             )
-            if rewritten:
+            if result.intent == "non_academic":
+                logger.info(
+                    "QueryAnalyzer | source=llm | intent=non_academic | question=%r | direct_response=%r",
+                    cleaned_question,
+                    result.direct_response,
+                )
+            elif rewritten:
                 logger.info(
                     "QueryAnalyzer | source=llm | intent=%s | rewritten=True | original=%r -> standalone=%r",
                     result.intent,
@@ -233,10 +287,27 @@ class QueryAnalyzer:
                 )
             else:
                 logger.info(
-                    "QueryAnalyzer | source=llm | intent=%s | rewritten=False | question=%r",
+                    "QueryAnalyzer | source=llm | intent=%s | rewritten=False | standalone=%r",
                     result.intent,
-                    cleaned_question,
+                    result.standalone_query,
                 )
+
+            if result.intent == "academic_rag":
+                if len(result.sub_queries) > 1:
+                    formatted_sub_queries = " | ".join(
+                        f"[{idx}] {sub_query!r}"
+                        for idx, sub_query in enumerate(result.sub_queries, start=1)
+                    )
+                    logger.info(
+                        "QueryAnalyzer | decomposed (%d sub-queries): %s",
+                        len(result.sub_queries),
+                        formatted_sub_queries,
+                    )
+                else:
+                    logger.info(
+                        "QueryAnalyzer | single-query (sub_queries=1): %r",
+                        result.sub_queries[0] if result.sub_queries else result.standalone_query,
+                    )
             return result
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -246,6 +317,7 @@ class QueryAnalyzer:
             return QueryAnalysisResult(
                 intent="academic_rag",
                 standalone_query=cleaned_question,
+                sub_queries=[cleaned_question],
             )
 
 

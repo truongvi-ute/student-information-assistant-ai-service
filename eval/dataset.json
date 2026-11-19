@@ -3,36 +3,110 @@
     "id": "q01",
     "category": "answerable",
     "question": "Mỗi học kỳ sinh viên phải đăng ký tối thiểu và tối đa bao nhiêu tín chỉ?",
-    "expected_keywords": ["14 tín chỉ", "24 tín chỉ"]
+    "expected_keywords": ["14 tín chỉ", "24 tín chỉ"],
+    "expected_source_groups": [["quyche", "quy che", "daotao", "dao tao"]]
   },
   {
     "id": "q02",
     "category": "answerable",
     "question": "Khi nào sinh viên bị cảnh báo học vụ?",
-    "expected_keywords": ["cảnh báo học vụ", "1.0", "1.5"]
+    "expected_keywords": ["cảnh báo học vụ", "1.0", "1.5"],
+    "expected_source_groups": [["quyche", "quy che", "daotao", "dao tao"]]
   },
   {
     "id": "q03",
     "category": "unanswerable",
     "question": "Trường có hỗ trợ vé máy bay du học miễn phí cho toàn bộ sinh viên năm nhất không?",
-    "expected_keywords": []
+    "expected_keywords": [],
+    "expect_empty_sources": true
   },
   {
     "id": "q04",
     "category": "unanswerable",
     "question": "Mức phạt tiền khi gửi xe đạp điện qua đêm tại ký túc xá khu Z là bao nhiêu?",
-    "expected_keywords": []
+    "expected_keywords": [],
+    "expect_empty_sources": true
   },
   {
     "id": "q05",
     "category": "no_retrieval",
     "question": "Xin chào, bạn là ai và có thể giúp gì cho mình?",
-    "expected_keywords": []
+    "expected_keywords": [],
+    "expect_empty_sources": true
   },
   {
     "id": "q06",
     "category": "no_retrieval",
     "question": "Cảm ơn bạn nhiều nhé!",
-    "expected_keywords": []
+    "expected_keywords": [],
+    "expect_empty_sources": true
+  },
+  {
+    "id": "q07",
+    "category": "multi_turn",
+    "history": [
+      {
+        "role": "user",
+        "content": "Cho mình hỏi thông tin về ngành An toàn thông tin."
+      },
+      {
+        "role": "assistant",
+        "content": "Bạn muốn tìm hiểu nội dung nào về chương trình đào tạo ngành An toàn thông tin?"
+      }
+    ],
+    "question": "Ngành đó cần tích lũy bao nhiêu tín chỉ và chuẩn đầu ra ngoại ngữ thế nào?",
+    "expected_keywords": ["an toàn thông tin", "tín chỉ"],
+    "expected_source_groups": [["attt", "an toan thong tin", "antoanthongtin"]]
+  },
+  {
+    "id": "q08",
+    "category": "multi_turn",
+    "history": [
+      {
+        "role": "user",
+        "content": "Ngành này đào tạo trong mấy năm?"
+      },
+      {
+        "role": "assistant",
+        "content": "Thời gian đào tạo có thể khác nhau tùy ngành. Bạn đang muốn tra cứu cho ngành học nào?"
+      }
+    ],
+    "question": "Ngành Kỹ thuật dữ liệu",
+    "expected_keywords": ["kỹ thuật dữ liệu"],
+    "expected_source_groups": [["ktdl", "ky thuat du lieu", "kythuatdulieu"]]
+  },
+  {
+    "id": "q09",
+    "category": "comparison",
+    "question": "So sánh các môn học chuyên ngành giữa ngành An toàn thông tin và ngành Kỹ thuật dữ liệu?",
+    "expected_keywords": ["an toàn thông tin", "kỹ thuật dữ liệu"],
+    "expected_source_groups": [
+      ["attt", "an toan thong tin", "antoanthongtin"],
+      ["ktdl", "ky thuat du lieu", "kythuatdulieu"]
+    ]
+  },
+  {
+    "id": "q10",
+    "category": "comparison",
+    "question": "Chương trình đào tạo ngành Công nghệ thông tin và ngành An toàn thông tin khác nhau ở điểm nào?",
+    "expected_keywords": ["công nghệ thông tin", "an toàn thông tin"],
+    "expected_source_groups": [
+      ["cntt", "cong nghe thong tin", "congnghethongtin"],
+      ["attt", "an toan thong tin", "antoanthongtin"]
+    ]
+  },
+  {
+    "id": "q11",
+    "category": "non_academic",
+    "question": "Các môn chuyên ngành gồm những môn nào?",
+    "expected_keywords": [],
+    "expect_empty_sources": true
+  },
+  {
+    "id": "q12",
+    "category": "non_academic",
+    "question": "Hôm nay thời tiết Sài Gòn thế nào và tối nay nên ăn món gì?",
+    "expected_keywords": [],
+    "expect_empty_sources": true
   }
 ]

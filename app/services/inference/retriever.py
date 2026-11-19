@@ -1,5 +1,6 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+
 from app.core.config import settings
 from app.core.exceptions import RetrievalError
 from app.core.logging import logger
@@ -101,7 +102,7 @@ class VectorRetriever:
                     )
                 )
 
-            logger.info("Truy xuất được %d chunks cho câu hỏi: '%s'", len(chunks), cleaned_query[:50])
+            logger.info("Truy xuất được %d chunks cho truy vấn: %r", len(chunks), cleaned_query)
             return chunks
 
         except Exception as e:
@@ -130,9 +131,9 @@ class VectorRetriever:
             )
 
         per_query_results: list[list[RetrievedChunk]] = []
-        for sub_q in cleaned_queries:
+        for sub_query in cleaned_queries:
             sub_chunks = self.retrieve(
-                query=sub_q,
+                query=sub_query,
                 top_k=top_k_per_query,
                 filename_filter=filename_filter,
                 score_threshold=score_threshold,
@@ -141,13 +142,13 @@ class VectorRetriever:
 
         # Gộp theo kiểu xen kẽ (round-robin) để đảm bảo mọi nhánh câu hỏi đều có đại diện
         merged_by_id: dict[str, RetrievedChunk] = {}
-        max_len = max((len(lst) for lst in per_query_results), default=0)
+        max_branch_chunks = max((len(branch_chunks) for branch_chunks in per_query_results), default=0)
 
-        for idx in range(max_len):
-            for chunk_list in per_query_results:
-                if idx >= len(chunk_list):
+        for rank_idx in range(max_branch_chunks):
+            for branch_chunks in per_query_results:
+                if rank_idx >= len(branch_chunks):
                     continue
-                candidate = chunk_list[idx]
+                candidate = branch_chunks[rank_idx]
                 existing = merged_by_id.get(candidate.id)
                 if existing is None:
                     if len(merged_by_id) < max_total_chunks:
@@ -155,7 +156,16 @@ class VectorRetriever:
                 elif candidate.score > existing.score:
                     merged_by_id[candidate.id] = candidate
 
-        return list(merged_by_id.values())
+        merged_chunks = list(merged_by_id.values())
+        per_query_counts = [len(branch_chunks) for branch_chunks in per_query_results]
+        logger.info(
+            "retrieve_multi_queries | branches=%d | per_query_hits=%s | merged=%d/%d",
+            len(cleaned_queries),
+            per_query_counts,
+            len(merged_chunks),
+            max_total_chunks,
+        )
+        return merged_chunks
 
 
 # Instance mặc định dùng cho toàn ứng dụng
