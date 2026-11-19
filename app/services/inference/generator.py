@@ -1,12 +1,12 @@
-import json
 import re
 import time
-from typing import Any
 
 import google.generativeai as genai
+
 from app.core.config import settings
 from app.core.exceptions import LLMGenerationError, LLMTimeoutError
 from app.core.logging import logger
+from app.schemas.request import ChatHistoryMessage
 from app.schemas.response import (
     ChatResponse,
     RetrievedChunk,
@@ -14,6 +14,13 @@ from app.schemas.response import (
     StructuredRAGOutput,
 )
 from app.services.inference.prompts import build_rag_prompt
+from app.services.inference.query_analyzer import (
+    QueryAnalyzer,
+    extract_json_dict,
+)
+from app.services.inference.query_analyzer import (
+    query_analyzer as default_query_analyzer,
+)
 from app.services.inference.retriever import VectorRetriever, vector_retriever
 
 NO_CONTEXT_FALLBACK_ANSWER = (
@@ -22,7 +29,6 @@ NO_CONTEXT_FALLBACK_ANSWER = (
     "như: **chương trình đào tạo, danh mục môn học, số tín chỉ, chuẩn đầu ra và điều kiện tốt nghiệp** nhé!"
 )
 
-_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
 _SOURCE_TAG_PATTERN = re.compile(r"\[Nguồn\s*(\d+)(?:\s*:[^\]]*)?\]", re.IGNORECASE)
 _REFUSAL_MARKERS = (
     "không tìm thấy thông tin",
@@ -40,11 +46,13 @@ class RAGGenerator:
     def __init__(
         self,
         retriever: VectorRetriever | None = None,
+        query_analyzer: QueryAnalyzer | None = None,
         api_key: str | None = None,
         model_name: str | None = None,
         timeout_seconds: float | None = None,
     ):
         self.vector_retriever = retriever or vector_retriever
+        self.query_analyzer = query_analyzer or default_query_analyzer
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model_name = model_name or settings.CHAT_MODEL
         self.timeout_seconds = (
@@ -62,28 +70,6 @@ class RAGGenerator:
             self._model = genai.GenerativeModel(self.model_name)
         return self._model
 
-    @staticmethod
-    def _extract_json_dict(raw_text: str) -> dict[str, Any] | None:
-        """Thử phân tích chuỗi JSON trực tiếp, trong khối ```json``` hoặc đoạn {...}."""
-        candidates = [raw_text]
-        fence_match = _JSON_FENCE_RE.search(raw_text)
-        if fence_match:
-            candidates.append(fence_match.group(1))
-
-        first_brace = raw_text.find("{")
-        last_brace = raw_text.rfind("}")
-        if 0 <= first_brace < last_brace:
-            candidates.append(raw_text[first_brace : last_brace + 1])
-
-        for candidate in candidates:
-            try:
-                parsed = json.loads(candidate)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-        return None
-
     @classmethod
     def _parse_llm_output(
         cls,
@@ -92,7 +78,7 @@ class RAGGenerator:
     ) -> StructuredRAGOutput:
         """Bóc tách JSON đầu ra từ LLM và chuẩn hóa chỉ số nguồn; fallback an toàn nếu nhận văn bản thường."""
         cleaned = (raw_text or "").strip()
-        data = cls._extract_json_dict(cleaned)
+        data = extract_json_dict(cleaned)
 
         if data is not None and isinstance(data.get("answer"), str) and data["answer"].strip():
             answer = data["answer"].strip()
@@ -237,23 +223,47 @@ class RAGGenerator:
         question: str,
         top_k: int = 5,
         filename_filter: str | None = None,
+        history: list[ChatHistoryMessage] | None = None,
     ) -> ChatResponse:
-        """Thực hiện toàn bộ luồng RAG: Retrieve -> Prompt -> Generate -> Selective Citation."""
+        """Thực hiện toàn bộ luồng Adaptive RAG: Analyze/Route/Rewrite -> Retrieve -> Prompt -> Generate -> Selective Citation."""
         t0 = time.perf_counter()
 
-        # 1. Truy xuất các đoạn văn bản liên quan
+        # 1. Phân tích ý định câu hỏi, hỏi làm rõ nếu thiếu ngữ cảnh hoặc viết lại truy vấn độc lập
+        analysis = self.query_analyzer.analyze(
+            question=question,
+            history=history,
+            filename_filter=filename_filter,
+        )
+        analyze_ms = (time.perf_counter() - t0) * 1000
+
+        if analysis.intent == "non_academic" and analysis.direct_response:
+            logger.info(
+                "Adaptive routing | intent=non_academic | analyze=%.1fms | skip_retrieval=True",
+                analyze_ms,
+            )
+            return ChatResponse(
+                question=question,
+                answer=analysis.direct_response,
+                sources=[],
+            )
+
+        effective_query = analysis.standalone_query.strip() or question
+
+        # 2. Truy xuất các đoạn văn bản liên quan bằng câu truy vấn đã làm rõ ngữ cảnh
+        t_ret = time.perf_counter()
         chunks = self.vector_retriever.retrieve(
-            query=question,
+            query=effective_query,
             top_k=top_k,
             filename_filter=filename_filter,
         )
-        retrieve_ms = (time.perf_counter() - t0) * 1000
+        retrieve_ms = (time.perf_counter() - t_ret) * 1000
 
-        # 2. Nếu không tìm thấy ngữ cảnh nào: trả lời an toàn ngay, không gọi LLM để tránh bịa đặt
+        # 3. Nếu không tìm thấy ngữ cảnh nào: trả lời an toàn ngay, không gọi LLM để tránh bịa đặt
         if not chunks:
             logger.info(
-                "Không tìm thấy ngữ cảnh nào cho câu hỏi: '%s' (retrieve=%.1fms)",
-                question[:50],
+                "Không tìm thấy ngữ cảnh nào cho truy vấn: '%s' (analyze=%.1fms | retrieve=%.1fms)",
+                effective_query[:50],
+                analyze_ms,
                 retrieve_ms,
             )
             return ChatResponse(
@@ -262,16 +272,22 @@ class RAGGenerator:
                 sources=[],
             )
 
-        # 3. Dựng prompt kèm ngữ cảnh và gọi LLM
+        # 4. Dựng prompt kèm ngữ cảnh, lịch sử hội thoại và gọi LLM
         t_gen = time.perf_counter()
-        prompt = build_rag_prompt(question=question, chunks=chunks)
+        prompt = build_rag_prompt(
+            question=question,
+            chunks=chunks,
+            history=history,
+            standalone_query=effective_query,
+        )
         raw_output = self.generate_answer(prompt)
         parsed_output = self._parse_llm_output(raw_output, total_chunks=len(chunks))
         generate_ms = (time.perf_counter() - t_gen) * 1000
         total_ms = (time.perf_counter() - t0) * 1000
 
         logger.info(
-            "RAG timing | retrieve=%.1fms | generate=%.1fms | total=%.1fms | used_sources=%d/%d",
+            "RAG timing | analyze=%.1fms | retrieve=%.1fms | generate=%.1fms | total=%.1fms | used_sources=%d/%d",
+            analyze_ms,
             retrieve_ms,
             generate_ms,
             total_ms,
