@@ -226,7 +226,7 @@ class RAGGenerator:
         history: list[ChatHistoryMessage] | None = None,
     ) -> ChatResponse:
         """Thực hiện toàn bộ luồng Adaptive RAG: Analyze/Route/Rewrite -> Retrieve -> Prompt -> Generate -> Selective Citation."""
-        t0 = time.perf_counter()
+        request_start = time.perf_counter()
 
         # 1. Phân tích ý định câu hỏi, hỏi làm rõ nếu thiếu ngữ cảnh hoặc viết lại truy vấn độc lập
         analysis = self.query_analyzer.analyze(
@@ -234,7 +234,7 @@ class RAGGenerator:
             history=history,
             filename_filter=filename_filter,
         )
-        analyze_ms = (time.perf_counter() - t0) * 1000
+        analyze_ms = (time.perf_counter() - request_start) * 1000
 
         if analysis.intent == "non_academic" and analysis.direct_response:
             logger.info(
@@ -248,17 +248,17 @@ class RAGGenerator:
                 sources=[],
             )
 
-        effective_query = analysis.standalone_query.strip() or question
-        rewritten = effective_query != question.strip()
+        standalone_query = analysis.standalone_query.strip() or question
+        rewritten = standalone_query != question.strip()
         sub_queries = [
-            q.strip()
-            for q in analysis.sub_queries
-            if isinstance(q, str) and q.strip()
-        ] or [effective_query]
+            sub_query.strip()
+            for sub_query in analysis.sub_queries
+            if isinstance(sub_query, str) and sub_query.strip()
+        ] or [standalone_query]
         is_multi_query = len(sub_queries) > 1
 
         # 2. Truy xuất các đoạn văn bản liên quan (đơn truy vấn hoặc đa truy vấn cân bằng)
-        t_ret = time.perf_counter()
+        retrieve_start = time.perf_counter()
         if is_multi_query:
             top_k_per_query = max(3, (top_k + 1) // 2)
             max_total_chunks = max(top_k, len(sub_queries) * 3)
@@ -270,17 +270,17 @@ class RAGGenerator:
             )
         else:
             chunks = self.vector_retriever.retrieve(
-                query=effective_query,
+                query=standalone_query,
                 top_k=top_k,
                 filename_filter=filename_filter,
             )
-        retrieve_ms = (time.perf_counter() - t_ret) * 1000
+        retrieve_ms = (time.perf_counter() - retrieve_start) * 1000
 
         # 3. Nếu không tìm thấy ngữ cảnh nào: trả lời an toàn ngay, không gọi LLM để tránh bịa đặt
         if not chunks:
             logger.info(
                 "Không tìm thấy ngữ cảnh nào cho truy vấn: '%s' (multi_query=%s | analyze=%.1fms | retrieve=%.1fms)",
-                effective_query[:50],
+                standalone_query[:50],
                 is_multi_query,
                 analyze_ms,
                 retrieve_ms,
@@ -292,25 +292,25 @@ class RAGGenerator:
             )
 
         # 4. Dựng prompt kèm ngữ cảnh, lịch sử hội thoại và gọi LLM
-        t_gen = time.perf_counter()
+        generate_start = time.perf_counter()
         prompt = build_rag_prompt(
             question=question,
             chunks=chunks,
             history=history,
-            standalone_query=effective_query,
+            standalone_query=standalone_query,
             sub_queries=sub_queries if is_multi_query else None,
         )
         raw_output = self.generate_answer(prompt)
         parsed_output = self._parse_llm_output(raw_output, total_chunks=len(chunks))
-        generate_ms = (time.perf_counter() - t_gen) * 1000
-        total_ms = (time.perf_counter() - t0) * 1000
+        generate_ms = (time.perf_counter() - generate_start) * 1000
+        total_ms = (time.perf_counter() - request_start) * 1000
 
         logger.info(
             "RAG timing | intent=academic_rag | rewritten=%s | multi_query=%s | sub_queries=%d | query=%r | analyze=%.1fms | retrieve=%.1fms | generate=%.1fms | total=%.1fms | used_sources=%d/%d",
             rewritten,
             is_multi_query,
             len(sub_queries),
-            effective_query,
+            standalone_query,
             analyze_ms,
             retrieve_ms,
             generate_ms,

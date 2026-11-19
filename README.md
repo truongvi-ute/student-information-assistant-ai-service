@@ -41,7 +41,7 @@ python -m venv .venv
 Sau khi môi trường ảo đã được kích hoạt (có tiền tố `(.venv)` ở đầu dòng lệnh):
 
 ```bash
-# Cài đặt tối thiểu cho Step 1 (Web server):
+# Cài đặt tối thiểu (Web server):
 pip install fastapi "uvicorn[standard]"
 
 # Hoặc cài đặt đầy đủ theo pyproject.toml khi cần:
@@ -154,6 +154,7 @@ sia-ai-service/
 │   │   │   ├── chunker.py     # Text chunking & splitting
 │   │   │   └── pipeline.py    # Ingestion orchestration
 │   │   └── inference/         # Inference & RAG modules
+│   │       ├── query_analyzer.py  # Intent routing, query rewriting & sub-query decomposition
 │   │       ├── retriever.py   # Vector retriever
 │   │       ├── reranker.py    # Document reranker
 │   │       ├── generator.py   # LLM generation

@@ -34,12 +34,14 @@ def _compact_alnum(value: str) -> str:
 
 def _filename_matches_group(filename: str, patterns: list[str]) -> bool:
     """Kiểm tra tên tài liệu có khớp với ít nhất một mẫu nhận diện trong nhóm hay không."""
-    norm_name = _normalize_text(filename)
-    compact_name = _compact_alnum(filename)
+    normalized_filename = _normalize_text(filename)
+    compact_filename = _compact_alnum(filename)
     for pattern in patterns:
-        norm_pat = _normalize_text(pattern)
-        compact_pat = _compact_alnum(pattern)
-        if (norm_pat and norm_pat in norm_name) or (compact_pat and compact_pat in compact_name):
+        normalized_pattern = _normalize_text(pattern)
+        compact_pattern = _compact_alnum(pattern)
+        if (normalized_pattern and normalized_pattern in normalized_filename) or (
+            compact_pattern and compact_pattern in compact_filename
+        ):
             return True
     return False
 
@@ -61,8 +63,8 @@ def compute_citation_precision(
 
     matched_sources = sum(
         1
-        for fname in returned_filenames
-        if any(_filename_matches_group(fname, group) for group in expected_source_groups)
+        for filename in returned_filenames
+        if any(_filename_matches_group(filename, group) for group in expected_source_groups)
     )
     return matched_sources / len(returned_filenames)
 
@@ -76,7 +78,7 @@ def compute_multi_doc_coverage(
         return bool(returned_filenames)
 
     return all(
-        any(_filename_matches_group(fname, group) for fname in returned_filenames)
+        any(_filename_matches_group(filename, group) for filename in returned_filenames)
         for group in expected_source_groups
     )
 
@@ -155,16 +157,16 @@ def evaluate_rag(dataset_path: Path, top_k: int = 5) -> None:
             item.get("expect_empty_sources", category in {"unanswerable", "no_retrieval", "non_academic"})
         )
 
-        start_t = time.perf_counter()
+        start_time = time.perf_counter()
         response = rag_generator.answer_question(
             question=question,
             top_k=top_k,
             history=history,
         )
-        elapsed_ms = (time.perf_counter() - start_t) * 1000
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         latencies.append(elapsed_ms)
 
-        returned_filenames = [src.filename for src in response.sources]
+        returned_filenames = [source.filename for source in response.sources]
         precision = compute_citation_precision(
             returned_filenames=returned_filenames,
             expected_source_groups=expected_groups,
@@ -174,28 +176,38 @@ def evaluate_rag(dataset_path: Path, top_k: int = 5) -> None:
 
         if expect_empty:
             empty_source_total += 1
-            empty_ok = len(returned_filenames) == 0
-            if empty_ok:
+            empty_sources_matched = len(returned_filenames) == 0
+            if empty_sources_matched:
                 empty_source_hits += 1
-            status_label = "PASS (sources=[])" if empty_ok else f"FAIL (got {len(returned_filenames)} sources)"
+            status_label = (
+                "PASS (sources=[])"
+                if empty_sources_matched
+                else f"FAIL (got {len(returned_filenames)} sources)"
+            )
         else:
             keyword_total += 1
-            haystack = " ".join(
-                [response.answer.lower(), *(src.content.lower() for src in response.sources)]
+            searchable_text = " ".join(
+                [response.answer.lower(), *(source.content.lower() for source in response.sources)]
             )
-            kw_ok = all(kw in haystack for kw in expected_keywords) if expected_keywords else bool(response.answer)
-            if kw_ok:
+            keywords_matched = (
+                all(keyword in searchable_text for keyword in expected_keywords)
+                if expected_keywords
+                else bool(response.answer)
+            )
+            if keywords_matched:
                 keyword_hits += 1
 
-            cov_note = ""
+            coverage_note = ""
             if category == "comparison" or len(expected_groups) > 1:
                 comparison_total += 1
-                cov_ok = compute_multi_doc_coverage(returned_filenames, expected_groups)
-                if cov_ok:
+                coverage_matched = compute_multi_doc_coverage(returned_filenames, expected_groups)
+                if coverage_matched:
                     comparison_hits += 1
-                cov_note = f" | multi_doc={'OK' if cov_ok else 'MISS'}"
+                coverage_note = f" | multi_doc={'OK' if coverage_matched else 'MISS'}"
 
-            status_label = f"{'HIT' if kw_ok else 'MISS'} | cite_prec={precision:.2f}{cov_note}"
+            status_label = (
+                f"{'HIT' if keywords_matched else 'MISS'} | cite_prec={precision:.2f}{coverage_note}"
+            )
 
         print(
             f"[{item['id']}] ({category}) {status_label} "
@@ -208,14 +220,14 @@ def evaluate_rag(dataset_path: Path, top_k: int = 5) -> None:
         if citation_precisions
         else 0.0
     )
-    kw_rate = (keyword_hits / keyword_total * 100) if keyword_total else 0.0
-    comp_rate = (comparison_hits / comparison_total * 100) if comparison_total else 0.0
-    empty_rate = (empty_source_hits / empty_source_total * 100) if empty_source_total else 0.0
+    keyword_hit_rate = (keyword_hits / keyword_total * 100) if keyword_total else 0.0
+    comparison_hit_rate = (comparison_hits / comparison_total * 100) if comparison_total else 0.0
+    empty_source_accuracy = (empty_source_hits / empty_source_total * 100) if empty_source_total else 0.0
 
     print("\n--- TỔNG HỢP KẾT QUẢ ADAPTIVE RAG ---")
-    print(f"Answer/Context Hit-Rate: {keyword_hits}/{keyword_total} ({kw_rate:.1f}%)")
-    print(f"Multi-Doc Comparison:    {comparison_hits}/{comparison_total} ({comp_rate:.1f}%)")
-    print(f"Empty-Source Accuracy:   {empty_source_hits}/{empty_source_total} ({empty_rate:.1f}%)")
+    print(f"Answer/Context Hit-Rate: {keyword_hits}/{keyword_total} ({keyword_hit_rate:.1f}%)")
+    print(f"Multi-Doc Comparison:    {comparison_hits}/{comparison_total} ({comparison_hit_rate:.1f}%)")
+    print(f"Empty-Source Accuracy:   {empty_source_hits}/{empty_source_total} ({empty_source_accuracy:.1f}%)")
     print(f"Mean Citation Precision: {mean_precision:.1f}%")
     print(f"Độ trễ trung bình:       {avg_latency:.1f} ms/query")
 

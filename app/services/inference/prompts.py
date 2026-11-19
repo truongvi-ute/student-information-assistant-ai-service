@@ -125,10 +125,10 @@ def build_rag_prompt(
         sections.append(f"[CÂU HỎI ĐÃ LÀM RÕ NGỮ CẢNH]\n{standalone_query.strip()}")
 
     if sub_queries and len(sub_queries) > 1:
-        sub_lines = "\n".join(f"- {sq}" for sq in sub_queries)
+        formatted_sub_queries = "\n".join(f"- {sub_query}" for sub_query in sub_queries)
         sections.append(
             "[CÁC NỘI DUNG CẦN ĐỐI CHIẾU / TỔNG HỢP]\n"
-            f"{sub_lines}\n"
+            f"{formatted_sub_queries}\n"
             "(Hãy đảm bảo giải đáp đầy đủ từng ý trên dựa trên [NGỮ CẢNH TÀI LIỆU]; "
             "nếu câu hỏi mang tính so sánh, nên trình bày rõ ràng theo từng mục hoặc bảng đối chiếu "
             "và liệt kê đủ chỉ số [Nguồn i] của tất cả tài liệu đã dùng.)"

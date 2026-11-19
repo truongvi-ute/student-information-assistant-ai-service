@@ -294,13 +294,14 @@ class QueryAnalyzer:
 
             if result.intent == "academic_rag":
                 if len(result.sub_queries) > 1:
-                    formatted_subs = " | ".join(
-                        f"[{idx}] {sq!r}" for idx, sq in enumerate(result.sub_queries, start=1)
+                    formatted_sub_queries = " | ".join(
+                        f"[{idx}] {sub_query!r}"
+                        for idx, sub_query in enumerate(result.sub_queries, start=1)
                     )
                     logger.info(
                         "QueryAnalyzer | decomposed (%d sub-queries): %s",
                         len(result.sub_queries),
-                        formatted_subs,
+                        formatted_sub_queries,
                     )
                 else:
                     logger.info(
