@@ -1,3 +1,5 @@
+import threading
+
 import boto3
 from botocore.client import BaseClient
 from botocore.config import Config
@@ -18,6 +20,7 @@ class StorageAdapter:
     ) -> None:
         self._custom_client = s3_client
         self._lazy_client: BaseClient | None = None
+        self._lock = threading.Lock()
         self.bucket_name = bucket_name or settings.STORAGE_BUCKET_NAME
 
     @property
@@ -25,14 +28,16 @@ class StorageAdapter:
         if self._custom_client is not None:
             return self._custom_client
         if self._lazy_client is None:
-            self._lazy_client = boto3.client(
-                "s3",
-                endpoint_url=settings.STORAGE_ENDPOINT_URL,
-                aws_access_key_id=settings.STORAGE_ACCESS_KEY,
-                aws_secret_access_key=settings.STORAGE_SECRET_KEY,
-                region_name=settings.STORAGE_REGION,
-                config=Config(s3={"addressing_style": "path"}),
-            )
+            with self._lock:
+                if self._lazy_client is None:
+                    self._lazy_client = boto3.client(
+                        "s3",
+                        endpoint_url=settings.STORAGE_ENDPOINT_URL,
+                        aws_access_key_id=settings.STORAGE_ACCESS_KEY,
+                        aws_secret_access_key=settings.STORAGE_SECRET_KEY,
+                        region_name=settings.STORAGE_REGION,
+                        config=Config(s3={"addressing_style": "path"}),
+                    )
         return self._lazy_client
 
     def download_file(self, file_key: str) -> bytes:

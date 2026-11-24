@@ -1,11 +1,12 @@
 import json
 import re
+import threading
 from typing import Any, Literal
 
 import google.generativeai as genai
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
+from app.core.config import genai_config_lock, settings
 from app.core.logging import logger
 from app.schemas.request import ChatHistoryMessage
 from app.services.inference.prompts import build_query_analysis_prompt
@@ -122,14 +123,18 @@ class QueryAnalyzer:
             if timeout_seconds is None
             else timeout_seconds
         )
+        self._lock = threading.Lock()
         self._model: genai.GenerativeModel | None = None
 
     @property
     def model(self) -> genai.GenerativeModel:
         """Khởi tạo Gemini GenerativeModel theo cơ chế lazy loading với HTTP REST transport."""
         if self._model is None:
-            genai.configure(api_key=self.api_key, transport="rest")
-            self._model = genai.GenerativeModel(self.model_name)
+            with self._lock:
+                if self._model is None:
+                    with genai_config_lock:
+                        genai.configure(api_key=self.api_key, transport="rest")
+                        self._model = genai.GenerativeModel(self.model_name)
         return self._model
 
     @staticmethod

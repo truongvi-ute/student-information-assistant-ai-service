@@ -1,5 +1,7 @@
-from unittest.mock import MagicMock
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock, patch
 
+import app.db.qdrant as qdrant_module
 from app.core.config import settings
 from app.services.inference.retriever import VectorRetriever
 
@@ -168,4 +170,24 @@ def test_retrieve_multi_queries_handles_empty_and_single_query():
     assert single_results[0].id == "p-1"
     assert mock_client.query_points.call_count == 1
     assert mock_client.query_points.call_args.kwargs["limit"] == 2
+
+
+def test_get_qdrant_client_normalizes_blank_api_key_and_initializes_once():
+    """Khởi tạo QdrantClient đồng thời chỉ tạo 1 singleton và chuẩn hóa api_key rỗng thành None."""
+    mock_instance = MagicMock()
+    previous_client = qdrant_module._client
+    qdrant_module._client = None
+    try:
+        with (
+            patch.object(settings, "QDRANT_API_KEY", "   "),
+            patch("app.db.qdrant.QdrantClient", return_value=mock_instance) as mock_cls,
+            ThreadPoolExecutor(max_workers=6) as pool,
+        ):
+            clients = list(pool.map(lambda _: qdrant_module.get_qdrant_client(), range(6)))
+
+        assert all(c is mock_instance for c in clients)
+        assert mock_cls.call_count == 1
+        assert mock_cls.call_args.kwargs["api_key"] is None
+    finally:
+        qdrant_module._client = previous_client
 

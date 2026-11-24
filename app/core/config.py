@@ -1,3 +1,5 @@
+import threading
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,6 +24,8 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     EMBEDDING_RPM_LIMIT: int = 50  # Đặt 0 nếu dùng gói trả phí để tắt giới hạn chờ mỗi phút
     EMBEDDING_TPM_LIMIT: int = 29000  # Giới hạn token/phút (Free Tier Gemini là 30,000 TPM)
+    EMBEDDING_QUERY_MAX_WAIT_SECONDS: float = 65.0
+    MAX_CONCURRENT_INGESTIONS: int = 2
     CHAT_MODEL: str = "gemini-2.5-flash"
     GEMINI_TIMEOUT_SECONDS: float = 30.0
 
@@ -52,3 +56,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+genai_config_lock = threading.Lock()

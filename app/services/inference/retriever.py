@@ -2,7 +2,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
 from app.core.config import settings
-from app.core.exceptions import RetrievalError
+from app.core.exceptions import EmbeddingError, RetrievalError
 from app.core.logging import logger
 from app.db.qdrant import get_qdrant_client
 from app.schemas.response import RetrievedChunk
@@ -105,6 +105,8 @@ class VectorRetriever:
             logger.info("Truy xuất được %d chunks cho truy vấn: %r", len(chunks), cleaned_query)
             return chunks
 
+        except EmbeddingError:
+            raise
         except Exception as e:
             logger.error("Lỗi khi truy xuất Qdrant: %s", str(e))
             raise RetrievalError(f"Không thể truy xuất dữ liệu từ Qdrant: {e}") from e

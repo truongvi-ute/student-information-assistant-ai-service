@@ -9,7 +9,7 @@ class ChatHistoryMessage(BaseModel):
     role: Literal["user", "assistant"] = Field(
         ..., description="Vai trò người gửi: 'user' (sinh viên) hoặc 'assistant' (AI)"
     )
-    content: str = Field(..., min_length=1, description="Nội dung tin nhắn")
+    content: str = Field(..., min_length=1, max_length=8000, description="Nội dung tin nhắn")
 
     @field_validator("content")
     @classmethod
@@ -23,7 +23,7 @@ class ChatHistoryMessage(BaseModel):
 class SearchRequest(BaseModel):
     """Yêu cầu truy xuất các đoạn tài liệu liên quan từ Vector DB."""
 
-    query: str = Field(..., min_length=1, description="Câu hỏi hoặc từ khóa cần tìm kiếm")
+    query: str = Field(..., min_length=1, max_length=4000, description="Câu hỏi hoặc từ khóa cần tìm kiếm")
     top_k: int = Field(default=5, ge=1, le=20, description="Số lượng đoạn văn bản tối đa cần lấy (1-20)")
     filename_filter: str | None = Field(
         default=None,
@@ -42,7 +42,7 @@ class SearchRequest(BaseModel):
 class ChatRequest(BaseModel):
     """Yêu cầu hỏi đáp RAG dành cho sinh viên."""
 
-    question: str = Field(..., min_length=1, description="Câu hỏi của sinh viên")
+    question: str = Field(..., min_length=1, max_length=4000, description="Câu hỏi của sinh viên")
     history: list[ChatHistoryMessage] = Field(
         default_factory=list,
         max_length=20,

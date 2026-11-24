@@ -1,10 +1,14 @@
+import asyncio
 import json
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.exceptions import LLMTimeoutError
+from app.core.exceptions import EmbeddingRateLimitError, LLMTimeoutError
 from app.main import app
 from app.schemas.request import ChatHistoryMessage
 from app.schemas.response import ChatResponse, RetrievedChunk
@@ -503,6 +507,68 @@ def test_generator_uses_single_retrieve_when_only_one_sub_query():
     sent_prompt = mock_model.generate_content.call_args.args[0]
     assert "[CÁC NỘI DUNG CẦN ĐỐI CHIẾU / TỔNG HỢP]" not in sent_prompt
     assert len(response.sources) == 1
+
+
+def test_chat_endpoint_runs_in_threadpool_without_blocking_health_check():
+    """Khi /v1/chat đang chặn chờ xử lý đồng bộ, /health vẫn phản hồi ngay trên event loop."""
+    entered_chat = threading.Event()
+    release_chat = threading.Event()
+
+    def _blocking_answer_question(**kwargs) -> ChatResponse:
+        entered_chat.set()
+        release_chat.wait(timeout=2.0)
+        return ChatResponse(
+            question=kwargs["question"],
+            answer="Câu trả lời sau khi chờ.",
+            sources=[],
+        )
+
+    async def _exercise() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            chat_task = asyncio.create_task(
+                client.post("/v1/chat", json={"question": "Ngành ATTT học mấy năm?"})
+            )
+            deadline = time.perf_counter() + 1.5
+            while not entered_chat.is_set() and time.perf_counter() < deadline:
+                await asyncio.sleep(0.01)
+            assert entered_chat.is_set()
+
+            health_start = time.perf_counter()
+            health_res = await client.get("/health")
+            health_elapsed = time.perf_counter() - health_start
+
+            assert health_res.status_code == 200
+            assert health_res.json() == {"status": "ok"}
+            assert health_elapsed < 0.5
+
+            release_chat.set()
+            chat_res = await chat_task
+            assert chat_res.status_code == 200
+            assert chat_res.json()["answer"] == "Câu trả lời sau khi chờ."
+
+    with patch(
+        "app.api.v1.routers.chat.rag_generator.answer_question",
+        side_effect=_blocking_answer_question,
+    ):
+        asyncio.run(_exercise())
+
+
+def test_chat_returns_503_on_embedding_rate_limit_and_422_on_oversized_question():
+    """Kiểm tra /v1/chat trả 503 khi quá ngưỡng chờ embedding và trả 422 khi câu hỏi quá dài."""
+    client = TestClient(app)
+
+    oversized_res = client.post("/v1/chat", json={"question": "a" * 4001})
+    assert oversized_res.status_code == 422
+
+    with patch(
+        "app.api.v1.routers.chat.rag_generator.answer_question",
+        side_effect=EmbeddingRateLimitError("Hệ thống đang bận xử lý nhiều yêu cầu."),
+    ):
+        busy_res = client.post("/v1/chat", json={"question": "Ngành ATTT học mấy năm?"})
+
+    assert busy_res.status_code == 503
+    assert "Hệ thống đang bận" in busy_res.json()["detail"]
 
 
 

@@ -1,27 +1,34 @@
+import threading
+
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+
 from app.core.config import settings
 from app.core.exceptions import VectorDBError
 from app.core.logging import logger
 
 _client: QdrantClient | None = None
+_client_lock = threading.Lock()
 
 
 def get_qdrant_client() -> QdrantClient:
     """Khởi tạo và tái sử dụng QdrantClient singleton."""
     global _client
     if _client is None:
-        try:
-            _client = QdrantClient(
-                host=settings.QDRANT_HOST,
-                port=settings.QDRANT_PORT,
-                api_key=settings.QDRANT_API_KEY,
-                timeout=10.0,
-            )
-            logger.info("Kết nối Qdrant thành công tại %s:%s", settings.QDRANT_HOST, settings.QDRANT_PORT)
-        except Exception as e:
-            logger.error("Không thể kết nối tới Qdrant: %s", str(e))
-            raise VectorDBError(f"Lỗi kết nối Qdrant: {e}") from e
+        with _client_lock:
+            if _client is None:
+                try:
+                    api_key = (settings.QDRANT_API_KEY or "").strip() or None
+                    _client = QdrantClient(
+                        host=settings.QDRANT_HOST,
+                        port=settings.QDRANT_PORT,
+                        api_key=api_key,
+                        timeout=10.0,
+                    )
+                    logger.info("Kết nối Qdrant thành công tại %s:%s", settings.QDRANT_HOST, settings.QDRANT_PORT)
+                except Exception as e:
+                    logger.error("Không thể kết nối tới Qdrant: %s", str(e))
+                    raise VectorDBError(f"Lỗi kết nối Qdrant: {e}") from e
     return _client
 
 

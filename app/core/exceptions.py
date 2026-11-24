@@ -27,6 +27,10 @@ class EmbeddingError(SIAException):
     pass  # Dùng khi: Hết tiền OpenAI, sai API Key, sai số chiều vector
 
 
+class EmbeddingRateLimitError(EmbeddingError):
+    pass
+
+
 # 6. Lỗi xảy ra trong khâu TRUY XUẤT ngữ cảnh từ Vector DB
 class RetrievalError(SIAException):
     pass  # Dùng khi: Qdrant lỗi lúc query_points, collection không truy vấn được

@@ -1,10 +1,14 @@
+import asyncio
 import io
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import docx
-import pytest
+import httpx
 from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
@@ -108,10 +112,7 @@ def test_upload_endpoint_accepts_docx():
             failed_files=[],
             status="success",
         )
-        coro = ingest_document(file=upload_file)
-        with pytest.raises(StopIteration) as exc_info:
-            coro.send(None)
-        result = exc_info.value.value
+        result = asyncio.run(ingest_document(file=upload_file))
 
     assert result.status == "success"
     assert result.successful_chunks == 1
@@ -307,3 +308,110 @@ def test_build_embedding_text_truncates_to_100_chars_and_strips_uuid_filename():
         embedded_fallback
         == "[Tài liệu: QD-BanhanhCTDT-Kythuatdulieu-2026.pdf]\nBảng điều kiện tốt nghiệp."
     )
+
+
+def test_ingest_endpoint_offloads_pipeline_to_threadpool_without_blocking_health():
+    """Khi /v1/documents/ingest đang xử lý file đồng bộ, /health vẫn phản hồi ngay."""
+    entered_ingest = threading.Event()
+    release_ingest = threading.Event()
+    docx_bytes = _create_docx_bytes("Tài liệu kiểm thử threadpool.")
+
+    def _blocking_ingest_bytes(**_kwargs) -> IngestionResult:
+        entered_ingest.set()
+        release_ingest.wait(timeout=2.0)
+        return IngestionResult(
+            total_files=1,
+            total_chunks=1,
+            successful_chunks=1,
+            failed_files=[],
+            status="success",
+        )
+
+    async def _exercise() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            ingest_task = asyncio.create_task(
+                client.post(
+                    "/v1/documents/ingest",
+                    files={
+                        "file": (
+                            "quy_che.docx",
+                            docx_bytes,
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        )
+                    },
+                )
+            )
+            deadline = time.perf_counter() + 1.5
+            while not entered_ingest.is_set() and time.perf_counter() < deadline:
+                await asyncio.sleep(0.01)
+            assert entered_ingest.is_set()
+
+            health_res = await client.get("/health")
+            assert health_res.status_code == 200
+
+            release_ingest.set()
+            ingest_res = await ingest_task
+            assert ingest_res.status_code == 200
+            assert ingest_res.json()["status"] == "success"
+
+    with patch(
+        "app.api.v1.routers.documents.ingestion_pipeline.ingest_bytes",
+        side_effect=_blocking_ingest_bytes,
+    ):
+        asyncio.run(_exercise())
+
+
+def test_storage_ingestion_semaphore_limits_concurrent_tasks():
+    """Giới hạn tối đa số tác vụ ingest nền chạy đồng thời để không chiếm hết threadpool."""
+    active_count = 0
+    max_observed = 0
+    count_lock = threading.Lock()
+    two_entered = threading.Event()
+    release_tasks = threading.Event()
+
+    def _slow_ingest_from_storage(**_kwargs) -> IngestionResult:
+        nonlocal active_count, max_observed
+        with count_lock:
+            active_count += 1
+            max_observed = max(max_observed, active_count)
+            if active_count == 2:
+                two_entered.set()
+        release_tasks.wait(timeout=2.0)
+        with count_lock:
+            active_count -= 1
+        return IngestionResult(
+            total_files=1,
+            total_chunks=2,
+            successful_chunks=2,
+            failed_files=[],
+            status="success",
+        )
+
+    payloads = [
+        IngestFromStorageRequest(
+            document_id=f"doc-{i}",
+            file_key=f"documents/doc-{i}.pdf",
+            filename="quy_che.pdf",
+        )
+        for i in range(4)
+    ]
+
+    with (
+        patch(
+            "app.api.v1.routers.documents.ingestion_pipeline.ingest_from_storage",
+            side_effect=_slow_ingest_from_storage,
+        ),
+        patch("app.api.v1.routers.documents._send_rag_status_callback"),
+        ThreadPoolExecutor(max_workers=4) as pool,
+    ):
+        futures = [pool.submit(_run_storage_ingestion_task, p) for p in payloads]
+        assert two_entered.wait(timeout=1.5)
+        time.sleep(0.05)
+        with count_lock:
+            assert active_count == 2
+        release_tasks.set()
+        for f in futures:
+            f.result(timeout=3.0)
+
+    assert max_observed == 2

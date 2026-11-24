@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.exceptions import (
     EmbeddingError,
+    EmbeddingRateLimitError,
     LLMGenerationError,
     LLMTimeoutError,
     RetrievalError,
@@ -15,7 +16,7 @@ router = APIRouter()
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_documents(payload: SearchRequest):
+def search_documents(payload: SearchRequest):
     """Truy xuất top-k đoạn văn bản liên quan nhất từ Qdrant."""
     try:
         chunks = vector_retriever.retrieve(
@@ -28,12 +29,14 @@ async def search_documents(payload: SearchRequest):
             total_found=len(chunks),
             results=chunks,
         )
+    except EmbeddingRateLimitError as e:
+        raise HTTPException(status_code=503, detail=e.message)
     except (RetrievalError, EmbeddingError) as e:
         raise HTTPException(status_code=502, detail=e.message)
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat_with_rag(payload: ChatRequest):
+def chat_with_rag(payload: ChatRequest):
     """Hỏi đáp RAG dựa trên tài liệu học vụ kèm lịch sử hội thoại và trích dẫn nguồn."""
     try:
         return rag_generator.answer_question(
@@ -44,6 +47,8 @@ async def chat_with_rag(payload: ChatRequest):
         )
     except LLMTimeoutError as e:
         raise HTTPException(status_code=504, detail=e.message)
+    except EmbeddingRateLimitError as e:
+        raise HTTPException(status_code=503, detail=e.message)
     except (LLMGenerationError, RetrievalError, EmbeddingError) as e:
         raise HTTPException(status_code=502, detail=e.message)
 

@@ -1,8 +1,10 @@
+import threading
 from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.exceptions import DocumentLoadError, IngestionError
@@ -18,6 +20,7 @@ from app.services.ingestion.loader import document_loader
 from app.services.ingestion.pipeline import ingestion_pipeline
 
 router = APIRouter()
+_ingestion_semaphore = threading.BoundedSemaphore(max(1, settings.MAX_CONCURRENT_INGESTIONS))
 
 
 def _resolve_callback_url(payload: IngestFromStorageRequest) -> str:
@@ -43,46 +46,47 @@ def _send_rag_status_callback(callback_url: str, body: dict[str, Any]) -> None:
 
 def _run_storage_ingestion_task(payload: IngestFromStorageRequest) -> None:
     callback_url = _resolve_callback_url(payload)
-    try:
-        result = ingestion_pipeline.ingest_from_storage(
-            document_id=payload.document_id,
-            file_key=payload.file_key,
-            filename=payload.filename,
-            metadata=payload.metadata,
-        )
-        if result.status == "success" and result.successful_chunks > 0:
-            _send_rag_status_callback(
-                callback_url,
-                {
-                    "status": "READY",
-                    "total_chunks": result.successful_chunks,
-                    "error_message": None,
-                },
+    with _ingestion_semaphore:
+        try:
+            result = ingestion_pipeline.ingest_from_storage(
+                document_id=payload.document_id,
+                file_key=payload.file_key,
+                filename=payload.filename,
+                metadata=payload.metadata,
             )
-        else:
+            if result.status == "success" and result.successful_chunks > 0:
+                _send_rag_status_callback(
+                    callback_url,
+                    {
+                        "status": "READY",
+                        "total_chunks": result.successful_chunks,
+                        "error_message": None,
+                    },
+                )
+            else:
+                _send_rag_status_callback(
+                    callback_url,
+                    {
+                        "status": "FAILED",
+                        "total_chunks": 0,
+                        "error_message": f"Tài liệu không tạo được dữ liệu vector (status={result.status}).",
+                    },
+                )
+        except Exception as e:
+            logger.error(
+                "Lỗi xử lý nền khi nạp tài liệu '%s' (%s): %s",
+                payload.document_id,
+                payload.filename,
+                str(e),
+            )
             _send_rag_status_callback(
                 callback_url,
                 {
                     "status": "FAILED",
                     "total_chunks": 0,
-                    "error_message": f"Tài liệu không tạo được dữ liệu vector (status={result.status}).",
+                    "error_message": str(e),
                 },
             )
-    except Exception as e:
-        logger.error(
-            "Lỗi xử lý nền khi nạp tài liệu '%s' (%s): %s",
-            payload.document_id,
-            payload.filename,
-            str(e),
-        )
-        _send_rag_status_callback(
-            callback_url,
-            {
-                "status": "FAILED",
-                "total_chunks": 0,
-                "error_message": str(e),
-            },
-        )
 
 
 @router.post("/ingest", response_model=IngestionResult)
@@ -105,7 +109,8 @@ async def ingest_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File tải lên bị rỗng.")
 
     try:
-        return ingestion_pipeline.ingest_bytes(
+        return await run_in_threadpool(
+            ingestion_pipeline.ingest_bytes,
             file_bytes=file_bytes,
             filename=filename,
         )
@@ -150,7 +155,7 @@ async def ingest_document_from_storage(
 
 
 @router.get("/collection-stats", response_model=CollectionStatsResponse)
-async def get_collection_stats():
+def get_collection_stats():
     """Xem số lượng vector points và thông số collection hiện tại trên Qdrant."""
     try:
         client = get_qdrant_client()

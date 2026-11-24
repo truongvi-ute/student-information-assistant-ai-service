@@ -1,9 +1,10 @@
 import re
+import threading
 import time
 
 import google.generativeai as genai
 
-from app.core.config import settings
+from app.core.config import genai_config_lock, settings
 from app.core.exceptions import LLMGenerationError, LLMTimeoutError
 from app.core.logging import logger
 from app.schemas.request import ChatHistoryMessage
@@ -60,14 +61,18 @@ class RAGGenerator:
             if timeout_seconds is None
             else timeout_seconds
         )
+        self._lock = threading.Lock()
         self._model: genai.GenerativeModel | None = None
 
     @property
     def model(self) -> genai.GenerativeModel:
         """Khởi tạo Gemini GenerativeModel theo cơ chế lazy loading với HTTP REST transport."""
         if self._model is None:
-            genai.configure(api_key=self.api_key, transport="rest")
-            self._model = genai.GenerativeModel(self.model_name)
+            with self._lock:
+                if self._model is None:
+                    with genai_config_lock:
+                        genai.configure(api_key=self.api_key, transport="rest")
+                        self._model = genai.GenerativeModel(self.model_name)
         return self._model
 
     @classmethod
