@@ -28,7 +28,7 @@ async def search_documents(payload: SearchRequest):
             results=chunks,
         )
     except (RetrievalError, EmbeddingError) as e:
-        raise HTTPException(status_code=502, detail=e.message)
+        raise HTTPException(status_code=502, detail=e.message) from e
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -41,7 +41,7 @@ async def chat_with_rag(payload: ChatRequest):
             history=payload.history,
         )
     except LLMTimeoutError as e:
-        raise HTTPException(status_code=504, detail=e.message)
+        raise HTTPException(status_code=504, detail=e.message) from e
     except (LLMGenerationError, RetrievalError, EmbeddingError) as e:
-        raise HTTPException(status_code=502, detail=e.message)
+        raise HTTPException(status_code=502, detail=e.message) from e
 

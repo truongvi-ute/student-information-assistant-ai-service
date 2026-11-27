@@ -1,5 +1,6 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+
 from app.core.config import settings
 from app.core.exceptions import VectorDBError
 from app.core.logging import logger

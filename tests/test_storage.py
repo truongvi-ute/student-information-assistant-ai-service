@@ -61,7 +61,7 @@ def test_storage_adapter_upload_text_and_error_handling():
     mock_client.put_object.assert_called_once_with(
         Bucket="sia-documents",
         Key="extracted/doc-1.md",
-        Body="# Quy chế đào tạo".encode("utf-8"),
+        Body="# Quy chế đào tạo".encode(),
         ContentType="text/markdown; charset=utf-8",
     )
 
