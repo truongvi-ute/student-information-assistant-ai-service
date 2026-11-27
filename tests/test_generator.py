@@ -4,11 +4,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.core.exceptions import LLMTimeoutError
 from app.main import app
 from app.schemas.request import ChatHistoryMessage
 from app.schemas.response import ChatResponse, RetrievedChunk
 from app.services.inference.generator import NO_CONTEXT_FALLBACK_ANSWER, RAGGenerator
+from app.services.inference.prompts import format_chat_history
 from app.services.inference.query_analyzer import QueryAnalysisResult
 
 
@@ -368,6 +370,19 @@ def test_api_chat_validates_and_forwards_history():
     )
     assert res_invalid_role.status_code == 422
 
+    over_limit_history = [
+        {"role": "user" if idx % 2 == 0 else "assistant", "content": f"Tin nhắn {idx + 1}"}
+        for idx in range(settings.MAX_CHAT_HISTORY_MESSAGES + 1)
+    ]
+    res_over_limit_history = client.post(
+        "/v1/chat",
+        json={
+            "question": "Ngành ATTT học mấy năm?",
+            "history": over_limit_history,
+        },
+    )
+    assert res_over_limit_history.status_code == 422
+
     expected_response = ChatResponse(
         question="Học mấy năm?",
         answer="Ngành An toàn thông tin đào tạo trong 4 năm.",
@@ -392,6 +407,28 @@ def test_api_chat_validates_and_forwards_history():
     assert len(forwarded_history) == 2
     assert forwarded_history[0].role == "user"
     assert forwarded_history[1].role == "assistant"
+
+
+def test_format_chat_history_respects_limit_and_zero_fallback():
+    """Kiểm tra format_chat_history giữ đúng MAX_CHAT_HISTORY_MESSAGES tin nhắn gần nhất và xử lý <= 0."""
+    history = [
+        ChatHistoryMessage(
+            role="user" if idx % 2 == 0 else "assistant",
+            content=f"Tin nhắn số {idx + 1}",
+        )
+        for idx in range(8)
+    ]
+
+    formatted = format_chat_history(history)
+    lines = formatted.splitlines()
+    assert len(lines) == settings.MAX_CHAT_HISTORY_MESSAGES
+    assert "Tin nhắn số 1" not in formatted
+    assert "Tin nhắn số 2" not in formatted
+    assert "Tin nhắn số 3" in formatted
+    assert "Tin nhắn số 8" in formatted
+
+    assert format_chat_history(history, max_messages=0) == "(Chưa có lịch sử hội thoại)"
+    assert format_chat_history(history, max_messages=-1) == "(Chưa có lịch sử hội thoại)"
 
 
 def test_generator_orchestrates_multi_query_retrieval_for_comparison():

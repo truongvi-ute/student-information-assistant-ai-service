@@ -1,3 +1,4 @@
+from app.core.config import settings
 from app.schemas.request import ChatHistoryMessage
 from app.schemas.response import RetrievedChunk
 
@@ -62,13 +63,18 @@ Trả về DUY NHẤT một đối tượng JSON hợp lệ (không kèm văn b�
 
 def format_chat_history(
     history: list[ChatHistoryMessage] | None,
-    max_messages: int = 6,
+    max_messages: int | None = None,
 ) -> str:
     """Định dạng tối đa max_messages tin nhắn gần nhất trong lịch sử hội thoại."""
-    if not history:
+    effective_max = (
+        settings.MAX_CHAT_HISTORY_MESSAGES
+        if max_messages is None
+        else max_messages
+    )
+    if not history or effective_max <= 0:
         return "(Chưa có lịch sử hội thoại)"
 
-    recent = history[-max_messages:]
+    recent = history[-effective_max:]
     lines: list[str] = []
     for msg in recent:
         speaker = "Sinh viên" if msg.role == "user" else "Trợ lý"
@@ -84,7 +90,7 @@ def build_query_analysis_prompt(
     """Tạo prompt phân tích ý định, làm rõ ngữ cảnh và viết lại câu truy vấn độc lập."""
     sections = [
         QUERY_ANALYZER_PROMPT,
-        f"[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]\n{format_chat_history(history, max_messages=6)}",
+        f"[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]\n{format_chat_history(history)}",
     ]
     if filename_filter and filename_filter.strip():
         sections.append(f"[TÀI LIỆU ĐANG LỌC SẴN]\n{filename_filter.strip()}")
@@ -118,7 +124,7 @@ def build_rag_prompt(
 
     if history:
         sections.append(
-            f"[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]\n{format_chat_history(history, max_messages=6)}"
+            f"[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]\n{format_chat_history(history)}"
         )
 
     if standalone_query and standalone_query.strip() and standalone_query.strip() != question.strip():
