@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "sia_documents"
-    
-    # text-embedding-004 của Gemini có 768 chiều (khác với OpenAI 1536)
+
+    # models/gemini-embedding-001 cấu hình output_dimensionality = 768 chiều
     QDRANT_VECTOR_SIZE: int = 768
     RETRIEVAL_SCORE_THRESHOLD: float = 0.45
 
@@ -39,16 +39,23 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
 
+    # Chat / RAG Settings
+    MAX_CHAT_HISTORY_MESSAGES: int = Field(
+        default=6,
+        ge=0,
+        description="Số lượng tin nhắn lịch sử hội thoại tối đa gửi kèm",
+    )
+
     # Storage Settings (RustFS Dev / S3 Prod)
     STORAGE_ENDPOINT_URL: str = "http://localhost:9000"
-    STORAGE_ACCESS_KEY: str = "sia-minio"
-    STORAGE_SECRET_KEY: str = "12345678"
+    STORAGE_ACCESS_KEY: str = Field(default="", description="S3/RustFS access key")
+    STORAGE_SECRET_KEY: str = Field(default="", description="S3/RustFS secret key")
     STORAGE_BUCKET_NAME: str = "sia-documents"
     STORAGE_REGION: str = "us-east-1"
 
     # Internal Backend Callback
     BACKEND_INTERNAL_URL: str = "http://localhost:8080"
-    INTERNAL_API_KEY: str = "sia-internal-secret-change-me"
+    INTERNAL_API_KEY: str = Field(default="", description="Internal API key for backend callbacks")
 
 
 settings = Settings()

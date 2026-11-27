@@ -28,6 +28,11 @@ def _resolve_callback_url(payload: IngestFromStorageRequest) -> str:
 
 
 def _send_rag_status_callback(callback_url: str, body: dict[str, Any]) -> None:
+    if not settings.INTERNAL_API_KEY.strip():
+        logger.warning(
+            "INTERNAL_API_KEY đang rỗng; callback tới %s có thể bị Backend từ chối (401/403).",
+            callback_url,
+        )
     try:
         response = httpx.post(
             callback_url,
