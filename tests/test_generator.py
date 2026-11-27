@@ -333,12 +333,10 @@ def test_generator_uses_rewritten_standalone_query_and_passes_history():
     mock_analyzer.analyze.assert_called_once_with(
         question="Còn chuẩn đầu ra ngoại ngữ của ngành đó thì sao?",
         history=history,
-        filename_filter=None,
     )
     mock_retriever.retrieve.assert_called_once_with(
         query=rewritten,
         top_k=4,
-        filename_filter=None,
     )
     sent_prompt = mock_model.generate_content.call_args.args[0]
     assert "[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]" in sent_prompt
@@ -407,6 +405,18 @@ def test_api_chat_validates_and_forwards_history():
     assert len(forwarded_history) == 2
     assert forwarded_history[0].role == "user"
     assert forwarded_history[1].role == "assistant"
+
+    with patch("app.api.v1.routers.chat.rag_generator.answer_question", return_value=expected_response):
+        res_legacy = client.post(
+            "/v1/chat",
+            json={
+                "question": "Học mấy năm?",
+                "top_k": 5,
+                "filename_filter": "legacy.pdf",
+                "history": [],
+            },
+        )
+    assert res_legacy.status_code == 200
 
 
 def test_format_chat_history_respects_limit_and_zero_fallback():
@@ -494,7 +504,6 @@ def test_generator_orchestrates_multi_query_retrieval_for_comparison():
         queries=sub_queries,
         top_k_per_query=3,
         max_total_chunks=6,
-        filename_filter=None,
     )
     sent_prompt = mock_model.generate_content.call_args.args[0]
     assert "[CÁC NỘI DUNG CẦN ĐỐI CHIẾU / TỔNG HỢP]" in sent_prompt
@@ -534,7 +543,6 @@ def test_generator_uses_single_retrieve_when_only_one_sub_query():
     mock_retriever.retrieve.assert_called_once_with(
         query="Ngành Kỹ thuật dữ liệu học mấy năm?",
         top_k=5,
-        filename_filter=None,
     )
     mock_retriever.retrieve_multi_queries.assert_not_called()
     sent_prompt = mock_model.generate_content.call_args.args[0]

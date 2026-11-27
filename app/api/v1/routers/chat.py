@@ -21,7 +21,6 @@ async def search_documents(payload: SearchRequest):
         chunks = vector_retriever.retrieve(
             query=payload.query,
             top_k=payload.top_k,
-            filename_filter=payload.filename_filter,
         )
         return SearchResponse(
             query=payload.query,
@@ -39,7 +38,6 @@ async def chat_with_rag(payload: ChatRequest):
         return rag_generator.answer_question(
             question=payload.question,
             top_k=payload.top_k,
-            filename_filter=payload.filename_filter,
             history=payload.history,
         )
     except LLMTimeoutError as e:

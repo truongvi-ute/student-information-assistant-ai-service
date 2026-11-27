@@ -226,7 +226,6 @@ class QueryAnalyzer:
         self,
         question: str,
         history: list[ChatHistoryMessage] | None = None,
-        filename_filter: str | None = None,
     ) -> QueryAnalysisResult:
         """Phân tích ý định câu hỏi, hỏi làm rõ nếu thiếu ngữ cảnh, viết lại hoặc phân rã câu truy vấn."""
         cleaned_question = question.strip()
@@ -255,7 +254,6 @@ class QueryAnalyzer:
         prompt = build_query_analysis_prompt(
             question=cleaned_question,
             history=history,
-            filename_filter=filename_filter,
         )
         try:
             response = self.model.generate_content(

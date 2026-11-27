@@ -43,7 +43,7 @@ KỊCH BẢN 2 — Câu hỏi học vụ bị khuyết ngữ cảnh NHƯNG trong
 
 KỊCH BẢN 3 — Trả lời trực tiếp không truy vấn tài liệu ("non_academic", sinh "direct_response"):
 Chỉ chọn "non_academic" trong 2 trường hợp rõ ràng sau:
-- Trường hợp 3a (Hỏi ngược lại để làm rõ ngữ cảnh - Clarification): Câu hỏi học vụ phụ thuộc chặt chẽ vào một ngành học / chương trình đào tạo / môn học cụ thể (ví dụ: "Các môn chuyên ngành gồm những môn nào?", "Ngành này học bao nhiêu tín chỉ?", "Chuẩn đầu ra ngoại ngữ của ngành là gì?") nhưng CẢ câu hỏi hiện tại LẪN [LỊCH SỬ HỘI THOẠI GẦN ĐÂY] đều CHƯA từng nhắc tới tên ngành/môn nào (và chưa có tài liệu được lọc sẵn). Tuyệt đối không tự đoán tên ngành -> đặt "intent": "non_academic", giữ nguyên "standalone_query", đặt "sub_queries": [], và viết "direct_response" lịch sự hỏi ngược lại sinh viên đang muốn tra cứu cho ngành học hoặc chương trình đào tạo nào.
+- Trường hợp 3a (Hỏi ngược lại để làm rõ ngữ cảnh - Clarification): Câu hỏi học vụ phụ thuộc chặt chẽ vào một ngành học / chương trình đào tạo / môn học cụ thể (ví dụ: "Các môn chuyên ngành gồm những môn nào?", "Ngành này học bao nhiêu tín chỉ?", "Chuẩn đầu ra ngoại ngữ của ngành là gì?") nhưng CẢ câu hỏi hiện tại LẪN [LỊCH SỬ HỘI THOẠI GẦN ĐÂY] đều CHƯA từng nhắc tới tên ngành/môn nào. Tuyệt đối không tự đoán tên ngành -> đặt "intent": "non_academic", giữ nguyên "standalone_query", đặt "sub_queries": [], và viết "direct_response" lịch sự hỏi ngược lại sinh viên đang muốn tra cứu cho ngành học hoặc chương trình đào tạo nào.
 - Trường hợp 3b (Chào hỏi xã giao & Ngoài phạm vi - Chitchat & Out-of-scope): Tin nhắn thuần túy là chào hỏi, cảm ơn, hỏi danh tính trợ lý hoặc câu hỏi hoàn toàn ngoài phạm vi giáo dục/học vụ nhà trường (thời tiết, nấu ăn, giải trí, bóng đá...). Đặt "intent": "non_academic", giữ nguyên "standalone_query", đặt "sub_queries": [], và viết "direct_response" phản hồi thân thiện, tự nhiên theo ngữ cảnh, đồng thời luôn khép lại bằng lời dẫn dắt về các chủ đề học vụ mà SIA hỗ trợ (chương trình đào tạo, danh mục môn học, số tín chỉ, chuẩn đầu ra, quy chế học vụ, điều kiện tốt nghiệp).
 
 QUY TẮC PHÂN RÃ TRUY VẤN CON ("sub_queries" — CHỈ áp dụng khi intent là "academic_rag"):
@@ -85,17 +85,14 @@ def format_chat_history(
 def build_query_analysis_prompt(
     question: str,
     history: list[ChatHistoryMessage] | None = None,
-    filename_filter: str | None = None,
 ) -> str:
     """Tạo prompt phân tích ý định, làm rõ ngữ cảnh và viết lại câu truy vấn độc lập."""
     sections = [
         QUERY_ANALYZER_PROMPT,
         f"[LỊCH SỬ HỘI THOẠI GẦN ĐÂY]\n{format_chat_history(history)}",
+        f"[CÂU HỎI HIỆN TẠI]\n{question}",
+        "[KẾT QUẢ PHÂN TÍCH (JSON)]",
     ]
-    if filename_filter and filename_filter.strip():
-        sections.append(f"[TÀI LIỆU ĐANG LỌC SẴN]\n{filename_filter.strip()}")
-    sections.append(f"[CÂU HỎI HIỆN TẠI]\n{question}")
-    sections.append("[KẾT QUẢ PHÂN TÍCH (JSON)]")
     return "\n\n".join(sections)
 
 

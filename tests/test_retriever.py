@@ -38,8 +38,8 @@ def test_retriever_empty_collection_returns_empty_list():
     mock_embedding.embed_query.assert_not_called()
 
 
-def test_retriever_returns_matching_chunks_and_applies_filter():
-    """Kiểm tra retriever chuyển đổi ScoredPoint đúng chuẩn và áp dụng bộ lọc filename."""
+def test_retriever_returns_matching_chunks():
+    """Kiểm tra retriever chuyển đổi ScoredPoint đúng chuẩn."""
     mock_client = MagicMock()
     mock_client.collection_exists.return_value = True
 
@@ -63,7 +63,7 @@ def test_retriever_returns_matching_chunks_and_applies_filter():
     mock_embedding.embed_query.return_value = [0.01] * 768
 
     service = VectorRetriever(qdrant_client=mock_client, embed_service=mock_embedding)
-    results = service.retrieve("Đăng ký tối thiểu bao nhiêu tín chỉ?", top_k=3, filename_filter="quy_che.pdf")
+    results = service.retrieve("Đăng ký tối thiểu bao nhiêu tín chỉ?", top_k=3)
 
     assert len(results) == 1
     assert results[0].document_id == "11111111-1111-1111-1111-111111111111"
@@ -73,10 +73,10 @@ def test_retriever_returns_matching_chunks_and_applies_filter():
     assert results[0].char_end == 165
     assert results[0].score == 0.89
 
-    # Kiểm tra query_filter đã được truyền vào query_points
+    # Kiểm tra query_points nhận đúng limit và không gắn query_filter
     call_kwargs = mock_client.query_points.call_args.kwargs
     assert call_kwargs["limit"] == 3
-    assert call_kwargs["query_filter"] is not None
+    assert "query_filter" not in call_kwargs
 
 
 def test_retriever_applies_default_score_threshold_and_override():
