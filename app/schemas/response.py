@@ -35,7 +35,6 @@ class SourceCitation(BaseModel):
     char_start: int | None = Field(default=None, description="Vị trí ký tự bắt đầu trong Markdown chuẩn hóa")
     char_end: int | None = Field(default=None, description="Vị trí ký tự kết thúc trong Markdown chuẩn hóa")
     score: float = Field(..., description="Điểm tương đồng với câu hỏi")
-    snippet: str = Field(..., description="Trích đoạn nội dung ngắn")
     content: str = Field(default="", description="Toàn bộ nội dung đoạn chunk")
 
 

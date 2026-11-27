@@ -89,8 +89,7 @@ def test_generator_with_context_builds_prompt_and_sources():
     assert source.char_start == 300
     assert source.char_end == 300 + len(long_content)
     assert source.content == long_content
-    assert source.snippet.endswith("...")
-    assert len(source.snippet) == 203
+    assert not hasattr(source, "snippet")
 
     # Đảm bảo prompt gửi vào LLM chứa cả nội dung chunk và câu hỏi
     sent_prompt = mock_model.generate_content.call_args.args[0]

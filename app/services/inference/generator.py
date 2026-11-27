@@ -169,7 +169,6 @@ class RAGGenerator:
 
         sources: list[SourceCitation] = []
         for chunk in selected_chunks:
-            snippet = chunk.content[:200] + ("..." if len(chunk.content) > 200 else "")
             sources.append(
                 SourceCitation(
                     document_id=chunk.document_id,
@@ -179,7 +178,6 @@ class RAGGenerator:
                     char_start=chunk.char_start,
                     char_end=chunk.char_end,
                     score=round(chunk.score, 4),
-                    snippet=snippet,
                     content=chunk.content,
                 )
             )
