@@ -141,7 +141,7 @@ class IngestionPipeline:
         embeddings = self.embedding_service.embed_texts(texts)
 
         points: list[PointStruct] = []
-        for chunk, vector in zip(chunks, embeddings):
+        for chunk, vector in zip(chunks, embeddings, strict=True):
             doc_id = chunk.metadata.get("document_id")
             id_source = (
                 f"doc:{doc_id}"

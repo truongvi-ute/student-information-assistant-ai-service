@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.config import settings
+
 
 class ChatHistoryMessage(BaseModel):
     """Một lượt tin nhắn trong lịch sử hội thoại trước đó."""
@@ -25,10 +27,6 @@ class SearchRequest(BaseModel):
 
     query: str = Field(..., min_length=1, description="Câu hỏi hoặc từ khóa cần tìm kiếm")
     top_k: int = Field(default=5, ge=1, le=20, description="Số lượng đoạn văn bản tối đa cần lấy (1-20)")
-    filename_filter: str | None = Field(
-        default=None,
-        description="Lọc theo tên file tài liệu cụ thể (ví dụ: 'quy_che.pdf')",
-    )
 
     @field_validator("query")
     @classmethod
@@ -45,14 +43,10 @@ class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, description="Câu hỏi của sinh viên")
     history: list[ChatHistoryMessage] = Field(
         default_factory=list,
-        max_length=20,
+        max_length=settings.MAX_CHAT_HISTORY_MESSAGES,
         description="Danh sách các tin nhắn gần nhất trong cuộc hội thoại (cũ trước, mới sau)",
     )
     top_k: int = Field(default=5, ge=1, le=20, description="Số lượng đoạn ngữ cảnh truy xuất (1-20)")
-    filename_filter: str | None = Field(
-        default=None,
-        description="Tùy chọn chỉ tìm trong một file tài liệu cụ thể (ví dụ: 'quy_che.pdf')",
-    )
 
     @field_validator("question")
     @classmethod

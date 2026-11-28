@@ -8,7 +8,6 @@ from markdownify import markdownify as html_to_markdown
 
 from app.core.exceptions import DocumentLoadError
 
-
 _DATA_IMAGE_MD_RE = re.compile(r"!\[[^\]]*\]\(data:image/[^)]+\)")
 
 

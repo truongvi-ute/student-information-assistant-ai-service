@@ -62,9 +62,20 @@ APP_NAME=sia-ai-service
 APP_ENV=development
 APP_PORT=8000
 
+# Google Gemini / LLM
+GEMINI_API_KEY=your-gemini-api-key-here
+CHAT_MODEL=gemini-2.5-flash
+
 # Vector Database (Qdrant)
 QDRANT_HOST=localhost
 QDRANT_PORT=6333
+
+# Storage (RustFS Dev) & Internal Backend Callback
+STORAGE_ENDPOINT_URL=http://localhost:9000
+STORAGE_ACCESS_KEY=sia-minio
+STORAGE_SECRET_KEY=12345678
+BACKEND_INTERNAL_URL=http://localhost:8080
+INTERNAL_API_KEY=sia-internal-secret-change-me
 ```
 
 ---
@@ -122,7 +133,7 @@ Các định dạng hỗ trợ: `.txt`, `.md`, `.pdf`, `.docx`.
   .\.venv\Scripts\python.exe scripts\ingest.py --path ..\duong_dan_toi_file.pdf --recreate
   ```
 
-> **Lưu ý về Gemini Free Tier:** Mặc định `EMBEDDING_RPM_LIMIT=80` (cấu hình trong `app/core/config.py` hoặc `.env`). Nếu tài liệu tạo ra nhiều hơn 80 chunks, CLI sẽ chủ động tạm dừng ~60 giây trước khi gửi tiếp sang cửa sổ phút mới để tránh lỗi `429`. Đặt `EMBEDDING_RPM_LIMIT=0` trong `.env` nếu dùng gói trả phí.
+> **Lưu ý về Gemini Free Tier:** Mặc định `EMBEDDING_RPM_LIMIT=50` và `EMBEDDING_TPM_LIMIT=29000` (cấu hình trong `app/core/config.py` hoặc `.env`). Khi nạp tài liệu qua **cả CLI lẫn API ingestion** vượt ngưỡng 50 chunks/phút hoặc ~29,000 tokens/phút, hệ thống sẽ chủ động tạm dừng ~60 giây sang cửa sổ phút mới để tránh lỗi `429`. Đặt `EMBEDDING_RPM_LIMIT=0` trong `.env` nếu dùng gói trả phí.
 
 ---
 
@@ -131,42 +142,40 @@ Các định dạng hỗ trợ: `.txt`, `.md`, `.pdf`, `.docx`.
 ```text
 sia-ai-service/
 ├── app/
-│   ├── main.py                # FastAPI entry point & lifecycle
+│   ├── main.py                      # FastAPI entry point, lifespan & /health
 │   ├── api/
-│   │   ├── dependencies.py    # Common dependencies (DB, services)
-│   │   └── v1/routers/        # API route handlers
-│   │       ├── chat.py        # Chat & conversation endpoints
-│   │       ├── documents.py   # Document ingestion endpoints
-│   │       └── health.py      # Health & readiness probes
-│   ├── core/                  # Core configurations & cross-cutting concerns
-│   │   ├── config.py          # Pydantic Settings
-│   │   ├── exceptions.py      # Custom exceptions & handlers
-│   │   └── logging.py         # Logger setup
+│   │   └── v1/routers/              # API route handlers
+│   │       ├── chat.py              # Search & RAG chat endpoints
+│   │       └── documents.py         # Document ingestion & stats endpoints
+│   ├── core/                        # Core configurations & cross-cutting concerns
+│   │   ├── config.py                # Pydantic Settings
+│   │   ├── exceptions.py            # Custom exceptions
+│   │   └── logging.py               # Logger setup
 │   ├── db/
-│   │   └── qdrant.py          # Qdrant client & collection management
-│   ├── schemas/               # Pydantic data schemas
-│   │   ├── request.py         # Request models
-│   │   └── response.py        # Response models
-│   ├── services/
-│   │   ├── embedding.py       # Shared embedding service (Ingestion + Inference)
-│   │   ├── ingestion/         # Ingestion pipeline modules
-│   │   │   ├── loader.py      # File & content loaders
-│   │   │   ├── chunker.py     # Text chunking & splitting
-│   │   │   └── pipeline.py    # Ingestion orchestration
-│   │   └── inference/         # Inference & RAG modules
-│   │       ├── query_analyzer.py  # Intent routing, query rewriting & sub-query decomposition
-│   │       ├── retriever.py   # Vector retriever
-│   │       ├── reranker.py    # Document reranker
-│   │       ├── generator.py   # LLM generation
-│   │       ├── agent.py       # Agentic reasoning / router
-│   │       └── prompts.py     # Prompt templates
-│   └── utils/                 # Utility helper functions
+│   │   └── qdrant.py                # Qdrant client & collection management
+│   ├── schemas/                     # Pydantic data schemas
+│   │   ├── document.py              # Ingestion & storage schemas
+│   │   ├── request.py               # Request models
+│   │   └── response.py              # Response models
+│   └── services/
+│       ├── embedding.py             # Shared Gemini embedding service (RPM/TPM)
+│       ├── storage.py               # RustFS / S3 storage adapter
+│       ├── ingestion/               # Ingestion pipeline modules
+│       │   ├── converters.py        # PDF/DOCX/TXT/MD -> Markdown converters
+│       │   ├── loader.py            # File & bytes loader
+│       │   ├── chunker.py           # Structure-aware Markdown chunker
+│       │   └── pipeline.py          # Ingestion orchestration
+│       └── inference/               # Inference & Adaptive RAG modules
+│           ├── query_analyzer.py    # Intent routing, rewriting & sub-queries
+│           ├── retriever.py         # Single & balanced multi-query retriever
+│           ├── generator.py         # Grounded generation & selective citation
+│           └── prompts.py           # Prompt templates
 ├── scripts/
-│   └── ingest.py              # CLI batch ingestion script
-├── eval/                      # RAG evaluation scripts & benchmarks
-├── tests/                     # Unit and integration tests
-├── .env.example               # Environment variables template
-├── docker-compose.yml         # Local container orchestration (Qdrant)
-├── pyproject.toml             # Project dependencies and packaging
-└── README.md                  # Project documentation
+│   └── ingest.py                    # CLI batch ingestion script
+├── eval/                            # RAG evaluation scripts & dataset
+├── tests/                           # Unit tests
+├── .env.example                     # Environment variables template
+├── docker-compose.yml               # Local Qdrant orchestration
+├── pyproject.toml                   # Project dependencies and packaging
+└── README.md                        # Project documentation
 ```

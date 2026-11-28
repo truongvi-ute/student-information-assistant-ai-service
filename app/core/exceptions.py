@@ -24,7 +24,7 @@ class VectorDBError(SIAException):
 
 # 5. Lỗi khi gọi MODEL EMBEDDING
 class EmbeddingError(SIAException):
-    pass  # Dùng khi: Hết tiền OpenAI, sai API Key, sai số chiều vector
+    pass  # Dùng khi: Hết quota Gemini, sai API Key, sai số chiều vector
 
 
 # 6. Lỗi xảy ra trong khâu TRUY XUẤT ngữ cảnh từ Vector DB

@@ -25,6 +25,10 @@ class StorageAdapter:
         if self._custom_client is not None:
             return self._custom_client
         if self._lazy_client is None:
+            if not settings.STORAGE_ACCESS_KEY.strip() or not settings.STORAGE_SECRET_KEY.strip():
+                raise StorageError(
+                    "Chưa cấu hình STORAGE_ACCESS_KEY hoặc STORAGE_SECRET_KEY trong biến môi trường (.env)."
+                )
             self._lazy_client = boto3.client(
                 "s3",
                 endpoint_url=settings.STORAGE_ENDPOINT_URL,

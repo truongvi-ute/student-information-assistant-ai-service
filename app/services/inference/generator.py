@@ -169,7 +169,6 @@ class RAGGenerator:
 
         sources: list[SourceCitation] = []
         for chunk in selected_chunks:
-            snippet = chunk.content[:200] + ("..." if len(chunk.content) > 200 else "")
             sources.append(
                 SourceCitation(
                     document_id=chunk.document_id,
@@ -179,7 +178,6 @@ class RAGGenerator:
                     char_start=chunk.char_start,
                     char_end=chunk.char_end,
                     score=round(chunk.score, 4),
-                    snippet=snippet,
                     content=chunk.content,
                 )
             )
@@ -222,7 +220,6 @@ class RAGGenerator:
         self,
         question: str,
         top_k: int = 5,
-        filename_filter: str | None = None,
         history: list[ChatHistoryMessage] | None = None,
     ) -> ChatResponse:
         """Thực hiện toàn bộ luồng Adaptive RAG: Analyze/Route/Rewrite -> Retrieve -> Prompt -> Generate -> Selective Citation."""
@@ -232,7 +229,6 @@ class RAGGenerator:
         analysis = self.query_analyzer.analyze(
             question=question,
             history=history,
-            filename_filter=filename_filter,
         )
         analyze_ms = (time.perf_counter() - request_start) * 1000
 
@@ -266,13 +262,11 @@ class RAGGenerator:
                 queries=sub_queries,
                 top_k_per_query=top_k_per_query,
                 max_total_chunks=max_total_chunks,
-                filename_filter=filename_filter,
             )
         else:
             chunks = self.vector_retriever.retrieve(
                 query=standalone_query,
                 top_k=top_k,
-                filename_filter=filename_filter,
             )
         retrieve_ms = (time.perf_counter() - retrieve_start) * 1000
 

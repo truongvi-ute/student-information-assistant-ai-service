@@ -1,13 +1,13 @@
+import contextlib
 import logging
 import sys
+
 from app.core.config import settings
 
 # Đảm bảo console trên Windows không bị lỗi UnicodeEncodeError cp1252 khi in tiếng Việt
 if hasattr(sys.stdout, "reconfigure"):
-    try:
+    with contextlib.suppress(Exception):
         sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
 
 
 def setup_logging() -> logging.Logger:

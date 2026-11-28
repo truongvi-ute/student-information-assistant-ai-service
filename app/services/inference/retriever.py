@@ -1,5 +1,4 @@
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
 from app.core.config import settings
 from app.core.exceptions import RetrievalError
@@ -31,7 +30,6 @@ class VectorRetriever:
         self,
         query: str,
         top_k: int = 5,
-        filename_filter: str | None = None,
         score_threshold: float | None = None,
     ) -> list[RetrievedChunk]:
         """Tìm top_k đoạn văn bản có ngữ nghĩa gần nhất với câu truy vấn."""
@@ -48,19 +46,7 @@ class VectorRetriever:
             # 2. Chuyển câu hỏi thành vector 768 chiều
             query_vector = self.embedding_service.embed_query(cleaned_query)
 
-            # 3. Xây dựng bộ lọc metadata nếu người dùng truyền filename_filter (lọc theo filename)
-            qdrant_filter: Filter | None = None
-            if filename_filter:
-                qdrant_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="filename",
-                            match=MatchValue(value=filename_filter),
-                        )
-                    ]
-                )
-
-            # 4. Truy vấn Qdrant bằng phương thức query_points
+            # 3. Truy vấn Qdrant bằng phương thức query_points
             effective_threshold = (
                 settings.RETRIEVAL_SCORE_THRESHOLD
                 if score_threshold is None
@@ -69,13 +55,12 @@ class VectorRetriever:
             response = self.client.query_points(
                 collection_name=self.collection_name,
                 query=query_vector,
-                query_filter=qdrant_filter,
                 limit=top_k,
                 score_threshold=effective_threshold,
                 with_payload=True,
             )
 
-            # 5. Chuyển đổi kết quả ScoredPoint sang schema RetrievedChunk
+            # 4. Chuyển đổi kết quả ScoredPoint sang schema RetrievedChunk
             chunks: list[RetrievedChunk] = []
             for point in response.points:
                 payload = point.payload or {}
@@ -114,7 +99,6 @@ class VectorRetriever:
         queries: list[str],
         top_k_per_query: int = 4,
         max_total_chunks: int = 8,
-        filename_filter: str | None = None,
         score_threshold: float | None = None,
     ) -> list[RetrievedChunk]:
         """Truy xuất Qdrant cho danh sách các câu truy vấn con, gộp cân bằng theo vòng (round-robin) và khử trùng lặp."""
@@ -126,7 +110,6 @@ class VectorRetriever:
             return self.retrieve(
                 query=cleaned_queries[0],
                 top_k=top_k_per_query,
-                filename_filter=filename_filter,
                 score_threshold=score_threshold,
             )
 
@@ -135,7 +118,6 @@ class VectorRetriever:
             sub_chunks = self.retrieve(
                 query=sub_query,
                 top_k=top_k_per_query,
-                filename_filter=filename_filter,
                 score_threshold=score_threshold,
             )
             per_query_results.append(sub_chunks)

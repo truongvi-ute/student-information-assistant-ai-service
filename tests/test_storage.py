@@ -4,12 +4,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
+from app.core.config import settings
 from app.core.exceptions import StorageError
 from app.services.storage import StorageAdapter
 
 
-def test_storage_adapter_creates_path_style_s3_client():
+def test_storage_adapter_creates_path_style_s3_client(monkeypatch):
     """Kiểm tra StorageAdapter khởi tạo boto3 client với addressing_style='path' cho RustFS."""
+    monkeypatch.setattr(settings, "STORAGE_ACCESS_KEY", "test-access")
+    monkeypatch.setattr(settings, "STORAGE_SECRET_KEY", "test-secret")
     mock_client = MagicMock()
     with patch("app.services.storage.boto3.client", return_value=mock_client) as mock_boto:
         adapter = StorageAdapter(bucket_name="sia-documents")
@@ -18,6 +21,16 @@ def test_storage_adapter_creates_path_style_s3_client():
     assert client is mock_client
     call_kwargs = mock_boto.call_args.kwargs
     assert call_kwargs["config"].s3 == {"addressing_style": "path"}
+
+
+def test_storage_adapter_raises_when_credentials_missing(monkeypatch):
+    """Kiểm tra StorageAdapter báo lỗi sớm khi thiếu STORAGE_ACCESS_KEY hoặc STORAGE_SECRET_KEY."""
+    monkeypatch.setattr(settings, "STORAGE_ACCESS_KEY", "")
+    monkeypatch.setattr(settings, "STORAGE_SECRET_KEY", "   ")
+    adapter = StorageAdapter(bucket_name="sia-documents")
+
+    with pytest.raises(StorageError, match="STORAGE_ACCESS_KEY"):
+        _ = adapter.client
 
 
 def test_storage_adapter_download_file_success_and_empty_key():
@@ -48,7 +61,7 @@ def test_storage_adapter_upload_text_and_error_handling():
     mock_client.put_object.assert_called_once_with(
         Bucket="sia-documents",
         Key="extracted/doc-1.md",
-        Body="# Quy chế đào tạo".encode("utf-8"),
+        Body="# Quy chế đào tạo".encode(),
         ContentType="text/markdown; charset=utf-8",
     )
 

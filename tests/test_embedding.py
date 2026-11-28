@@ -27,9 +27,11 @@ def test_embedding_dimension_mismatch_raises_error():
     service = EmbeddingService()
     bad_result = {"embedding": [[0.1] * 10]}
 
-    with patch("app.services.embedding.genai.embed_content", return_value=bad_result):
-        with pytest.raises(EmbeddingError, match="không khớp với Qdrant"):
-            service.embed_texts(["Nội dung test"])
+    with (
+        patch("app.services.embedding.genai.embed_content", return_value=bad_result),
+        pytest.raises(EmbeddingError, match="không khớp với Qdrant"),
+    ):
+        service.embed_texts(["Nội dung test"])
 
 
 def test_embed_texts_waits_when_exceeding_rpm_window():
